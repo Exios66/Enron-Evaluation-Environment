@@ -84,15 +84,17 @@ LAW_FIRM_DOMAINS = {
 }
 
 # Generic attorney markers in the sender display name or address local part.
+# ``partner`` and ``legal`` are deliberately EXCLUDED: they are ordinary
+# corporate vocabulary (a "partner-news@amazon.com" newsletter, or an Enron
+# analyst's emails about "legal" topics) and produced false-positive
+# attorney-demand rows.
 ATTORNEY_NAME_PATTERNS = [
     r"\besq\.?\b",
     r"\battorney",
     r"\bcounsel",
     r"\blaw\s+offices?\b",
     r"\blawyer",
-    r"\bpartner\b",
     r"\bj\.?\s?d\.?\b",
-    r"\blegal\b",
     r"atty\b",
 ]
 
@@ -152,32 +154,45 @@ NOTICE_OPENERS = [
     "OFFICIAL NOTICE",
 ]
 
-# Demand forms (subject or body).
+# Demand forms (subject or body). These are LEGAL demand markers — the
+# generic energy-market word "demand" (e.g. "demand charges", "demand
+# reduction", "demand for computers", "demand for petro products") is
+# deliberately excluded: it is ordinary market content, not a demand letter,
+# and routing ~15k market emails into `demand` was the original over-fire.
+# Billing-reminder vocabulary (OVERDUE, PAST DUE, DELINQUENT, DEBT
+# COLLECTION, PAYMENT IS DUE) is also excluded: an "access request approval
+# is overdue" email is an internal reminder, not a demand. A legal demand is
+# a demand FOR something actionable (payment / arbitration / damages /
+# performance / relief), a demand letter, a cease-and-desist, a
+# litigation/notice-of-default form, or an explicit payment demand.
 DEMAND_MARKERS = [
-    "DEMAND",
+    "DEMAND LETTER",
+    "LETTER OF DEMAND",
+    "DEMAND FOR PAYMENT",
+    "DEMAND FOR ARBITRATION",
+    "DEMAND FOR DAMAGES",
+    "DEMAND FOR SPECIFIC PERFORMANCE",
+    "DEMAND FOR RELIEF",
     "CEASE AND DESIST",
     "CEASE-AND-DESIST",
-    "PAYMENT DEMAND",
-    "DEMAND FOR",
-    "LETTER OF DEMAND",
+    "LITIGATION HOLD",
+    "LEGAL HOLD",
     "NOTICE OF DEFAULT",
     "NOTICE OF BREACH",
+    "NOTICE TO CURE",
+    "FINAL NOTICE",
     "FINAL DEMAND",
     "IMMEDIATE PAYMENT",
     "IMMEDIATE PAYMENT IS REQUIRED",
-    "PAYMENT IS DUE",
-    "AMOUNT DUE",
-    "OVERDUE",
-    "PAST DUE",
-    "DELINQUENT ACCOUNT",
-    "COLLECTION",
+    "REMIT PAYMENT",
     "ULTIMATUM",
-    "REMEDY THIS",
     "BREACH OF CONTRACT",
     "BREACH OF THE AGREEMENT",
 ]
 
-# Press-release forms.
+# Press-release forms. Matched on the SUBJECT or on the message's own opening
+# lines (first 200 chars) — a forward/reply whose BODY carries a forwarded
+# "FOR IMMEDIATE RELEASE" original is NOT a press release, it is a reply.
 PRESS_RELEASE_OPENERS = [
     "FOR IMMEDIATE RELEASE",
     "FOR RELEASE",
@@ -193,12 +208,14 @@ MEETING_MARKERS = [
     "OUTLOOK MEETING",
 ]
 
-# Voicemail transcription markers.
+# Voicemail transcription markers — the message's OWN transcription header.
+# "voice message" / "voice mail" references inside ordinary emails (e.g.
+# "the voice message you left me") are not voicemails, so only the
+# transcription-header forms count. "MESSAGE FROM" is deliberately excluded:
+# a "Message from John and Louise" reply is an email, not a voicemail.
 VOICEMAIL_MARKERS = [
     "THIS IS A VOICE MAIL",
     "VOICEMAIL TRANSCRIPTION",
-    "VOICE MAIL MESSAGE",
-    "VOICE MESSAGE",
 ]
 
 _OPENERS_RE = {name: [re.compile(re.escape(m), re.IGNORECASE) for m in ms]
@@ -211,7 +228,22 @@ _OPENERS_RE = {name: [re.compile(re.escape(m), re.IGNORECASE) for m in ms]
                    "voicemail": VOICEMAIL_MARKERS,
                }.items()}
 _LETTER_CLOSERS_RE = [re.compile(re.escape(m), re.IGNORECASE) for m in LETTER_CLOSERS]
-_DEMAND_RE = [re.compile(re.escape(m), re.IGNORECASE) for m in DEMAND_MARKERS]
+# Marketing-clickbait markers (Dear + Sincerely is the form, but the
+# "CONGRATULATIONS YOU WON" / "CLICK HERE NOW" body is a marketing blast, not
+# a letter). Kept out of `letter` so the subclass stays meaningful.
+_MARKETING_RE = [
+    re.compile(r"\bCLICK HERE NOW\b", re.IGNORECASE),
+    re.compile(r"\bCONGRATULATIONS YOU (WON|HAVE WON)\b", re.IGNORECASE),
+    re.compile(r"\bYOU HAVE BEEN SELECTED\b", re.IGNORECASE),
+    re.compile(r"\bFREE TRIAL ISSUE\b", re.IGNORECASE),
+    re.compile(r"\bACT NOW\b", re.IGNORECASE),
+]
+# "DEMAND FOR" needs a word boundary: "DEMAND FOR" is a legal demand, but
+# "CAPACITY" contains "CAP" + "ACITY" and "2.7 TCF" contains "CF" — the
+# plain substring matched "AP" inside "CAPACITY" (capacity, receipt point
+# capacity, ...) and "CF" inside "TCF" (a natural-gas volume unit), routing
+# ~1.5k market emails into `demand`. The \b boundary fixes both.
+_DEMAND_RE = [re.compile(r"\b" + re.escape(m) + r"\b", re.IGNORECASE) for m in DEMAND_MARKERS]
 
 SUBCLASS_KEYS = [
     "email",
@@ -261,6 +293,53 @@ def _subject(row: dict) -> str:
     return (row.get("subject") or "").strip()
 
 
+_FORWARD_MARKERS = [
+    "-----original message-----",
+    "-----forwarded by",
+    "=======================",
+    "-----original email-----",
+    # The CMU corpus' own forward/reply separator is a 30-dash line —
+    # "---------------------- FORWARDED BY ... ON <date> ---------------------------".
+    "---------------------- forwarded by",
+    "---------------------- forwarded by",
+]
+# Outlook's "inline attachment follows" forward header:
+#   "COOPER, SEAN" <COOPERS@EPENERGY.COM> ON 07/11/2000 08:03:41 PM
+#   TO: ...
+#   CC: ...
+#   SUBJECT: ...
+_FORWARD_HEADER_RE = re.compile(
+    r'^\s*"[^"]+"\s+.*\bON\s+\d{1,2}/\d{1,2}/\d{4}\b',
+    re.IGNORECASE | re.MULTILINE)
+
+
+def _strip_forwarded(body: str) -> str:
+    """Drop the forwarded-original tail of a reply/forward.
+
+    A reply that carries a forwarded memorandum / demand letter / press
+    release / notice is a reply, not a memo / demand / release / notice —
+    the markers belong to the original, not this message.
+    """
+    if not body:
+        return ""
+    low = body.lower()
+    cut = len(body)
+    for m in _FORWARD_MARKERS:
+        idx = low.find(m)
+        if idx != -1:
+            cut = min(cut, idx)
+    mh = _FORWARD_HEADER_RE.search(body)
+    if mh:
+        cut = min(cut, mh.start())
+    return body[:cut]
+
+
+def _own_head(row: dict, limit: int = 1500) -> str:
+    """Subject + the message's OWN body, forwarded-original tail stripped."""
+    body = _strip_forwarded(row.get("body") or "")
+    return " ".join((_subject(row), body[:limit])).upper()
+
+
 def _head(row: dict, limit: int = 1500) -> str:
     """Subject + body head, whitespace-collapsed, for marker scanning."""
     body = (row.get("body") or "")[:limit]
@@ -300,46 +379,52 @@ def label_correspondence(row: dict) -> tuple[str, str]:
         return "other", "unparseable file"
 
     subject = _subject(row)
-    body_head = _body_head(row)
-    head = _head(row)
+    own_head = _own_head(row)
 
     # Meeting requests (calendar content type wins over everything).
     ctypes = {a.get("mime") for a in row.get("attachments") or []}
-    if "text/calendar" in ctypes or _has_any(head, _OPENERS_RE["meeting"]):
+    if "text/calendar" in ctypes or _has_any(own_head, _OPENERS_RE["meeting"]):
         return "meeting_request", "calendar content-type or meeting markers"
 
-    if _has_any(head, _OPENERS_RE["voicemail"]):
+    if _has_any(own_head, _OPENERS_RE["voicemail"]):
         return "voicemail", "voicemail transcription markers"
 
-    if _has_any(head, _OPENERS_RE["press"]):
+    if _has_any(own_head, _OPENERS_RE["press"]):
         return "press_release", "press-release forms"
 
     # Demands — checked before notices because demands often self-identify
     # as notices (e.g. "NOTICE OF DEFAULT" is a demand).
-    if _has_any(head, _DEMAND_RE) or _has_any(subject, _DEMAND_RE):
+    if _has_any(own_head, _DEMAND_RE) or _has_any(subject, _DEMAND_RE):
         is_atty, evidence = _is_attorney(row)
         if is_atty:
             return "attorney_demand", f"demand markers + {evidence}"
         return "demand", "demand markers"
 
-    if _has_any(head, _OPENERS_RE["notice"]) or _has_any(subject, _OPENERS_RE["notice"]):
+    if _has_any(own_head, _OPENERS_RE["notice"]) or _has_any(subject, _OPENERS_RE["notice"]):
         return "notice", "notice forms"
 
-    # Memoranda.
-    memo_open = any(_has_any(body_head, [r]) for r in _OPENERS_RE["memo"]) or \
+    # Memoranda. Matched on the SUBJECT or on the message's OWN opening
+    # (forwarded-original tail stripped) — a forwarded memorandum buried in
+    # a reply's body is a reply, not a memo.
+    memo_open = any(_has_any(own_head, [r]) for r in _OPENERS_RE["memo"]) or \
         _has_any(subject, _OPENERS_RE["memo"])
-    memo_block = bool(MEMO_HEADER_BLOCK_RE.search(body_head))
+    memo_block = bool(MEMO_HEADER_BLOCK_RE.search(own_head))
     if memo_open or memo_block:
         return "memo", "memorandum header block or openers"
 
     # Formal letters: salutation + closing + external sender. A "RE:" subject
     # is a letter reference line ("Regarding"), not a reply, so only FW:/FWD:
     # prefixes disqualify the letter form (a forwarded email chain).
+    # Marketing spam is also letter-form (Dear + Sincerely), so clickbait
+    # markers are excluded: "CONGRATULATIONS YOU WON", "CLICK HERE NOW" etc.
+    # are marketing, not a letter — and keeping them out of `letter` keeps
+    # the subclass meaningful for the pipeline's attorney-correspondence use.
     sender_addr = (row.get("sender_addr") or "").lower()
     external = "enron.com" not in sender_addr and not sender_addr.endswith("@enron")
-    letter_open = _has_any(body_head, _OPENERS_RE["letter"])
-    letter_close = _has_any(body_head, _LETTER_CLOSERS_RE)
-    if letter_open and letter_close and external and not re.match(
+    letter_open = _has_any(own_head, _OPENERS_RE["letter"])
+    letter_close = _has_any(own_head, _LETTER_CLOSERS_RE)
+    marketing = _has_any(own_head, _MARKETING_RE)
+    if letter_open and letter_close and external and not marketing and not re.match(
             r"^\s*(?:fw|fwd)\s*:\s*", subject, re.IGNORECASE):
         return "letter", "salutation + closing, external sender"
 
