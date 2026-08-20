@@ -54,10 +54,10 @@ INDEX = ROOT / "data" / "enron" / "index.jsonl"
 DEFAULT_OUT = ROOT / "data" / "enron" / "pipeline.jsonl"
 
 SOURCE_DATASET = "enron-cmu-20150507"
-NON_EMAIL_CAP = 60      # per non-email subclass wholesale cap
+NON_EMAIL_CAP = 45      # per non-email subclass wholesale cap
 OTHER_CAP = 20          # control slice for unparseable files
 EMAIL_CAP_PER_CUSTODIAN = 15
-DEFAULT_N = 400
+DEFAULT_N = 500
 
 
 def _addr_line(name: str, addr: str) -> str:
