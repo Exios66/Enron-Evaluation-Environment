@@ -284,7 +284,7 @@ def _is_attorney(row: dict) -> tuple[bool, str]:
                 return True, f"attorney address pattern {pat}"
     name = (row.get("sender") or "").strip()
     for pat in ATTORNEY_NAME_PATTERNS:
-        if re.search(pat, name):
+        if re.search(pat, name, re.IGNORECASE):
             return True, f"attorney name pattern {pat}"
     return False, ""
 
