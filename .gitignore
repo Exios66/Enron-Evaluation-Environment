@@ -15,3 +15,6 @@ venv/
 # OS / editor
 .DS_Store
 data/cleaned/index_cleaned.jsonl
+
+# local data dir (lives in /tmp during pipeline runs; regenerate via scripts/acquire_enron.py)
+/data
