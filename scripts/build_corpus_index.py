@@ -104,6 +104,22 @@ def _parse_date(raw: str) -> str:
         return _clean(raw) or ""
 
 
+def _hdr(msg: email.message.Message, name: str) -> str:
+    """Header value as str, tolerating malformed headers.
+
+    The CMU Enron maildir contains messages whose headers crash the strict
+    ``email.policy.default`` parser at *access* time (e.g. ``TypeError:
+    'ValueTerminal' object does not support item assignment`` from
+    address-list parsing). Header access is lazy, so those failures happen
+    outside the guarded file-open below. One bad header must not abort a
+    517k-message walk.
+    """
+    try:
+        return str(msg.get(name, "") or "")
+    except Exception:  # noqa: BLE001 - malformed header -> treat as absent
+        return ""
+
+
 def parse_message(path: Path, rel: str) -> dict:
     """Parse one maildir message file into an index row (never raises)."""
     try:
@@ -112,14 +128,14 @@ def parse_message(path: Path, rel: str) -> dict:
     except Exception:  # noqa: BLE001 - one bad file must not abort the walk
         return {"filename": rel, "parseable": False}
 
-    from_header = str(msg.get("From", "") or "")
+    from_header = _hdr(msg, "From")
     from_pairs = _split_addrs(from_header)
     sender, sender_addr = (from_pairs[0] if from_pairs else ("", ""))
     sender = _clean(sender)
 
     recipients = []
     for role in ("to", "cc", "bcc"):
-        for name, addr in _split_addrs(str(msg.get(role, "") or "")):
+        for name, addr in _split_addrs(_hdr(msg, role)):
             recipients.append({"name": name, "addr": addr, "role": role})
 
     # Body: preferred text/plain, else text/html (tags stripped).
@@ -128,8 +144,11 @@ def parse_message(path: Path, rel: str) -> dict:
     attachments = []
     for part in msg.walk():
         ctype = part.get_content_type()
-        filename = part.get_filename()
-        disposition = str(part.get_content_disposition() or "").lower()
+        try:
+            filename = part.get_filename()
+            disposition = str(part.get_content_disposition() or "").lower()
+        except Exception:  # noqa: BLE001 - malformed MIME headers
+            filename, disposition = None, ""
         if ctype == "multipart/*" or not filename and ctype in ("multipart/alternative", "multipart/mixed"):
             continue
         if ctype in ("text/plain", "text/html"):
@@ -161,17 +180,17 @@ def parse_message(path: Path, rel: str) -> dict:
                 "size": f.stat().st_size if f.is_file() else 0,
             })
 
-    subject = _clean(str(msg.get("Subject", "") or ""))
-    references = _clean(str(msg.get("References", "") or ""))
-    in_reply_to = _clean(str(msg.get("In-Reply-To", "") or ""))
+    subject = _clean(_hdr(msg, "Subject"))
+    references = _clean(_hdr(msg, "References"))
+    in_reply_to = _clean(_hdr(msg, "In-Reply-To"))
     return {
         "filename": rel,
         "sender": sender,
         "sender_addr": sender_addr,
         "recipients": recipients,
-        "date": _parse_date(str(msg.get("Date", "") or "")),
+        "date": _parse_date(_hdr(msg, "Date")),
         "subject": subject,
-        "message_id": _clean(str(msg.get("Message-ID", "") or "")),
+        "message_id": _clean(_hdr(msg, "Message-ID")),
         "references": references,
         "in_reply_to": in_reply_to,
         "body": body,
