@@ -14,3 +14,4 @@ venv/
 
 # OS / editor
 .DS_Store
+data/cleaned/index_cleaned.jsonl
