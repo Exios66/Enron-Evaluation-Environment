@@ -68,6 +68,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import matplotlib  # noqa: E402
 
 matplotlib.use("Agg")
+import matplotlib.dates as mdates  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 
 from correspondence_subclasses import (  # noqa: E402
@@ -106,7 +107,23 @@ plt.rcParams.update({
     "grid.alpha": 0.25,
     "grid.linewidth": 0.5,
     "axes.axisbelow": True,
+    "axes.spines.top": False,        # cleaner frame: keep left/bottom only
+    "axes.spines.right": False,
 })
+
+# Semantic palette — one hue per EDA dimension, reused across figures so the
+# report reads as one document rather than twelve one-off charts.
+TEAL = "#0f766e"          # corpus composition (subclasses, custodians, months)
+AMBER = "#b45309"         # temporal (hour-of-day)
+AMBER_DARK = "#7c2d12"    # temporal emphasis (peak markers)
+BLUE = "#1d4ed8"          # senders / internal-external
+PURPLE = "#6d28d9"        # content (body lengths)
+PINK = "#be185d"          # recipient fan-out (+ weekend bars)
+CYAN = "#0e7490"          # threads
+GREEN = "#15803d"         # duplicates (unique)
+RED = "#dc2626"           # duplicates (copies) / budget lines
+VIOLET = "#7c3aed"        # recipient roles
+GRAY = "#6b7280"          # de-emphasis (zero classes, notes)
 
 # Long tick-label sets get rotated + right-aligned so neighbors never collide.
 _ROTATED_XTICKS = {"rotation": 30, "ha": "right"}
@@ -117,7 +134,7 @@ def _finish(fig, path, footer: str) -> None:
     fig.tight_layout(rect=[0, FOOTER_FRAC, 1, 1])
     fig.text(0.5, FOOTER_FRAC / 2, footer, ha="center", va="center",
              fontsize=7, color="#444")
-    fig.savefig(path, dpi=110)
+    fig.savefig(path, dpi=150)
     plt.close(fig)
 
 
@@ -136,10 +153,21 @@ def _headroom(ax, is_barh: bool = False) -> None:
 THREAD_PREFIX_RE = re.compile(r"^\s*(?:re|fw|fwd|sv)\s*:\s*", re.IGNORECASE)
 
 
-def _add_citation(fig, note: str) -> None:
-    fig.tight_layout(rect=[0, FOOTER_FRAC, 1, 1])
-    fig.text(0.5, FOOTER_FRAC / 2, note, ha="center", va="center",
-             fontsize=7, color="#444")
+def _grid(ax, axis: str = "y") -> None:
+    """Grid on ONE axis only — bars read cleaner without cross-hatching."""
+    other = "x" if axis == "y" else "y"
+    ax.grid(True, axis=axis)
+    ax.grid(False, axis=other)
+
+
+def _kfmt(v: float) -> str:
+    """Compact axis number format: 505929 -> '506k', 2011417 -> '2.0M'."""
+    if v >= 1_000_000:
+        s = f"{v / 1_000_000:.1f}M"
+        return s.replace(".0M", "M")
+    if v >= 1_000:
+        return f"{v / 1_000:.0f}k"
+    return f"{v:.0f}"
 
 
 def _fmt(n: float) -> str:
@@ -1012,145 +1040,276 @@ def render_findings(res: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _barh(ax, names, values, color, title, xlabel="count"):
-    ax.barh(range(len(names))[::-1], values, color=color)
-    ax.set_yticks(range(len(names))[::-1])
-    ax.set_yticklabels(names, fontsize=7)
+def _barh(ax, names, values, color, title, xlabel="count",
+          value_labels=True, share_denom: int | None = None):
+    """Horizontal bars with value labels, headroom and an x-only grid.
+
+    ``share_denom`` (e.g. corpus size) appends a ``(x.x%)`` share to each
+    label so absolute counts and proportions are visible in one glance.
+    """
+    ys = range(len(names))[::-1]
+    ax.barh(ys, values, color=color)
+    ax.set_yticks(ys)
+    ax.set_yticklabels(names, fontsize=7.5)
+    vmax = max(values) or 1
+    if value_labels:
+        for y, v in zip(ys, values):
+            txt = f"{v:,}" + (f" ({v / share_denom:.1%})" if share_denom else "")
+            ax.text(v + vmax * 0.015, y, txt, va="center", ha="left",
+                    fontsize=7.5)
     ax.set_xlabel(xlabel)
     ax.set_title(title)
+    ax.xaxis.set_major_formatter(
+        plt.FuncFormatter(lambda v, _p: _kfmt(v)))
+    _headroom(ax, is_barh=True)
+    ax.set_xlim(left=0)
+    _grid(ax, "x")
 
 
 def make_figures(res: dict, figdir: Path) -> None:
     n = res["n"]
 
-    # 01 — subclass distribution: HORIZONTAL bars (long labels stay readable,
-    # no diagonal collision), sorted so the biggest class sits on top.
+    # 01 — subclass distribution, TWO PANELS. The corpus is ~98% `email`, so
+    # a single linear chart renders every rare class as an invisible sliver.
+    # Left: all classes on a log x-axis (honest overview of the spread).
+    # Right: linear zoom on the rare classes, where the labeler's precision
+    # actually lives. Zero-count classes are annotated so the enum's empty
+    # slots stay visible (the coverage check).
     items = sorted(((k, res["subclasses"].get(k, 0)) for k in SUBCLASS_KEYS),
                    key=lambda kv: kv[1])
-    fig, ax = plt.subplots(figsize=(9, 5.2))
     names = [SUBCLASS_LABELS[k] for k, _ in items]
     vals = [v for _, v in items]
-    bars = ax.barh(names, vals, color="#0f766e")
+    total = sum(vals) or 1
+    fig, (ax1, ax2) = plt.subplots(
+        1, 2, figsize=(12.5, 5.2), gridspec_kw={"width_ratios": [1.1, 1]})
+
+    # Panel A — all classes, log scale (5 orders of magnitude fit).
+    ys = range(len(names))[::-1]
+    ax1.barh(ys, vals, color=TEAL)
+    ax1.set_yticks(ys)
+    ax1.set_yticklabels(names, fontsize=7.5)
+    ax1.set_xscale("log")
     vmax = max(vals) or 1
-    for b, v in zip(bars, vals):
-        ax.text(v + vmax * 0.015, b.get_y() + b.get_height() / 2,
-                f"{v:,}", va="center", ha="left", fontsize=7.5)
-    _headroom(ax, is_barh=True)
-    ax.set_xlim(left=0)
-    ax.set_xlabel("messages")
-    ax.set_title("Correspondence subclass distribution (full corpus)")
+    ax1.set_xlim(0.5, vmax * 6)
+    for y, v in zip(ys, vals):
+        if v > 0:
+            ax1.text(v * 1.3, y, f"{v:,} ({v / total:.2%})",
+                     va="center", ha="left", fontsize=7.5)
+        else:
+            ax1.text(0.55, y, "0", va="center", ha="left",
+                     fontsize=7.5, color=GRAY)
+    ax1.set_xlabel("messages (log scale)")
+    ax1.set_title("All subclasses — five orders of magnitude")
+    _grid(ax1, "x")
+
+    # Panel B — rare classes only (email excluded), linear, share-labeled.
+    rare = [(k, v) for k, v in items if k != "email"]
+    rnames = [SUBCLASS_LABELS[k] for k, _ in rare]
+    rvals = [v for _, v in rare]
+    rys = range(len(rnames))[::-1]
+    bars = ax2.barh(rys, rvals, color=TEAL)
+    ax2.set_yticks(rys)
+    ax2.set_yticklabels(rnames, fontsize=7.5)
+    rmax = max(rvals) or 1
+    for y, v in zip(rys, rvals):
+        ax2.text(v + rmax * 0.02, y, f"{v:,} ({v / total:.2%})",
+                 va="center", ha="left", fontsize=7.5)
+    ax2.set_xlabel("messages (linear — email excluded)")
+    ax2.set_title("Rare subclasses — the labeler's precision regime")
+    _headroom(ax2, is_barh=True)
+    ax2.set_xlim(left=0)
+    _grid(ax2, "x")
     _finish(fig, figdir / "01_subclasses.png", CITE)
 
     # 02 — hour-of-day profile (UTC): replaces the structurally-empty
     # attachment-parts chart (the CMU dump is text-only, 0 attachments).
+    # Business hours are shaded so the desk-workforce profile in report §12
+    # is visible directly on the chart.
     hours = res.get("hour_of_day", {})
     fig, ax = plt.subplots(figsize=(9, 4.2))
     hv = [hours.get(h, 0) for h in range(24)]
-    bars = ax.bar([f"{h:02d}" for h in range(24)], hv, color="#b45309")
+    bars = ax.bar([f"{h:02d}" for h in range(24)], hv, color=AMBER)
+    ax.axvspan(7.5, 18.5, color="#fde68a", alpha=0.35, zorder=0)
+    _headroom(ax)
+    ymax = ax.get_ylim()[1]
+    ax.text(7.7, ymax * 0.97, "business hours\n08–18 UTC", ha="left",
+            va="top", fontsize=7.5, color="#92400e")
     if max(hv):
         peak = max(range(24), key=lambda h: hv[h])
-        bars[peak].set_color("#7c2d12")
+        bars[peak].set_color(AMBER_DARK)
         ax.annotate(f"peak {peak:02d}:00 UTC · {hv[peak]:,}",
                     (peak, hv[peak]), xytext=(0, 6),
                     textcoords="offset points", ha="center", va="bottom",
-                    fontsize=8, color="#7c2d12")
-    _headroom(ax)
+                    fontsize=8, color=AMBER_DARK)
     ax.set_xlabel("hour of day (UTC)")
     ax.set_ylabel("messages")
     ax.set_title("Message volume by hour of day")
+    _grid(ax, "y")
     _finish(fig, figdir / "02_hour_of_day.png", CITE)
 
-    # 03 — day-of-week profile; weekends highlighted.
+    # 03 — day-of-week profile; weekends highlighted, counts + shares labeled.
     dows = res.get("day_of_week", {})
     fig, ax = plt.subplots(figsize=(7, 4.2))
     dv = [dows.get(d, 0) for d in range(7)]
     bars = ax.bar(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], dv,
-                  color=["#1d4ed8"] * 5 + ["#be185d"] * 2)
+                  color=[BLUE] * 5 + [PINK] * 2)
     tot = sum(dv) or 1
     for b, v in zip(bars, dv):
-        ax.annotate(f"{v / tot:.0%}", (b.get_x() + b.get_width() / 2, v),
+        ax.annotate(f"{v / tot:.0%}\n{v:,}",
+                    (b.get_x() + b.get_width() / 2, v),
                     xytext=(0, 4), textcoords="offset points",
-                    ha="center", va="bottom", fontsize=8)
+                    ha="center", va="bottom", fontsize=7.5)
     _headroom(ax)
     ax.set_ylabel("messages")
     ax.set_title("Message volume by weekday (UTC) — weekend in pink")
+    _grid(ax, "y")
     _finish(fig, figdir / "03_day_of_week.png", CITE)
 
-    # 04 — monthly volume timeline.
+    # 04 — monthly volume timeline on a REAL date axis. The raw YYYY-MM keys
+    # include data-quality artifacts (e.g. 1980-01, 2044-01 typo years) that,
+    # plotted categorically, stretch the axis and squish the actual 1997–2002
+    # story. We focus on the smallest contiguous month window holding 99% of
+    # all message volume (two-pointer sweep), annotate the peak, and disclose
+    # the excluded tail on the chart — no volume is silently dropped.
     months = res.get("months", {})
     fig, ax = plt.subplots(figsize=(10, 4.2))
-    mk = list(months.keys())
-    mv = [months[k] for k in mk]
-    if mk:
-        ax.plot(mk, mv, color="#0f766e", lw=1.6, marker="o", ms=2.5)
-        ax.fill_between(mk, mv, color="#0f766e", alpha=0.15)
-        if len(mk) > 18:
-            ax.set_xticks(mk[::max(1, len(mk) // 18)])
-        plt.setp(ax.get_xticklabels(), **_ROTATED_XTICKS, fontsize=7.5)
+    if months:
+        keys_all = sorted(months)
+        vals_all = [months[k] for k in keys_all]
+        total_m = sum(vals_all) or 1
+        target = 0.99 * total_m
+        # Smallest contiguous window [i, j] with sum >= 99% of volume.
+        best = (0, len(vals_all) - 1)
+        i = 0
+        running = 0
+        for j, v in enumerate(vals_all):
+            running += v
+            while running - vals_all[i] >= target and i < j:
+                running -= vals_all[i]
+                i += 1
+            if running >= target and (j - i) < (best[1] - best[0]):
+                best = (i, j)
+        lo_k, hi_k = keys_all[best[0]], keys_all[best[1]]
+        keys = keys_all[best[0]:best[1] + 1]
+        mv = [months[k] for k in keys]
+        exc_n = total_m - sum(mv)
+        xs = [datetime.date(int(k[:4]), int(k[5:7]), 1) for k in keys]
+        peak_val = max(mv)
+        ax.plot(xs, mv, color=TEAL, lw=1.6, marker="o", ms=2.5)
+        ax.fill_between(xs, mv, color=TEAL, alpha=0.15)
+        locator = mdates.AutoDateLocator()
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+        ax.margins(x=0.02)
+        ax.set_ylim(0, peak_val * 1.14)
+        pk = mv.index(peak_val)
+        ax.annotate(f"peak {keys[pk]} · {peak_val:,}",
+                    (xs[pk], peak_val), xytext=(0, 8),
+                    textcoords="offset points", ha="center", va="bottom",
+                    fontsize=8, color=AMBER_DARK)
+        if exc_n:
+            n_exc = len(keys_all) - len(keys)
+            note = (f"omitted {n_exc} outlier month(s) outside the 99% "
+                    f"volume window ({exc_n:,} msgs, {exc_n / total_m:.1%}) — "
+                    "Date-header artifacts")
+            ax.text(0.01, 0.97, note, transform=ax.transAxes, va="top",
+                    fontsize=7.5, color=GRAY)
     ax.set_ylabel("messages")
     ax.set_title("Message volume by month (Date header, YYYY-MM)")
+    _grid(ax, "y")
     _finish(fig, figdir / "04_monthly_volume.png", CITE)
 
-    # 05 — internal vs external senders, value-labeled with headroom.
+    # 05 — internal vs external senders, value + share labeled with headroom.
     fig, ax = plt.subplots(figsize=(6.5, 4.2))
     labs = ["internal\n(enron.com)", "external", "no sender parsed"]
     vv = [res["internal"], res["external"],
           n - res["internal"] - res["external"]]
-    bars = ax.bar(labs, vv, color="#1d4ed8")
+    bars = ax.bar(labs, vv, color=BLUE)
     for b, v in zip(bars, vv):
-        ax.annotate(f"{v:,}", (b.get_x() + b.get_width() / 2, v),
+        ax.annotate(f"{v:,}\n({v / n:.1%})",
+                    (b.get_x() + b.get_width() / 2, v),
                     xytext=(0, 4), textcoords="offset points",
                     ha="center", va="bottom", fontsize=8)
     _headroom(ax)
     ax.set_ylabel("messages")
     ax.set_title("Internal vs external senders")
+    _grid(ax, "y")
     _finish(fig, figdir / "05_internal_external.png", CITE)
 
-    # 06 — top 20 senders.
+    # 06 — top 20 senders (value labels + headroom via _barh).
     fig, ax = plt.subplots(figsize=(8.5, 5.5))
     senders = list(res["senders"].items())[:20]
-    _barh(ax, [k for k, _ in senders], [v for _, v in senders], "#1d4ed8",
+    _barh(ax, [k for k, _ in senders], [v for _, v in senders], BLUE,
           "Top 20 senders", xlabel="messages")
     _finish(fig, figdir / "06_top_senders.png", CITE)
 
     # 07 — body-length histogram vs pipeline budgets; x-axis clipped at the
     # p99.5 so the bulk stays visible (the long tail is noted on the axis).
+    # Adds the median marker, the ≤16k single-pass coverage stat, and an
+    # explicit note for the budgets that lie beyond the clip.
     lens = [r[0] for r in res["reservoir"]] or [0]
     p995 = sorted(lens)[int(0.995 * (len(lens) - 1))]
     clip = max(p995 * 1.25, 1000)
     fig, ax = plt.subplots(figsize=(9, 4.4))
     ax.hist([x for x in lens if x <= clip], bins=60, range=(0, clip),
-            color="#6d28d9", edgecolor="white")
+            color=PURPLE, edgecolor="white")
     for b in BUDGETS:
         if b <= clip:
-            ax.axvline(b, color="crimson", ls="--", lw=1.2)
+            ax.axvline(b, color=RED, ls="--", lw=1.2)
             ax.annotate(f"{b // 1000}k", (b, ax.get_ylim()[1]),
                         xytext=(-3, -2), textcoords="offset points",
                         ha="right", va="top", rotation=90,
-                        fontsize=8, color="crimson")
+                        fontsize=8, color=RED)
+    med = res["body_pcts"][50]
+    if med <= clip:
+        ax.axvline(med, color=TEAL, lw=1.4)
+        ax.annotate(f"median {_kfmt(med)}", (med, ax.get_ylim()[1]),
+                    xytext=(4, -2), textcoords="offset points",
+                    ha="left", va="top", fontsize=8, color=TEAL)
+    under16 = 1 - res["budget_over"][16_000][1]
+    ax.text(0.985, 0.90, f"{under16:.1%} of bodies ≤ 16k chars",
+            transform=ax.transAxes, ha="right", va="top",
+            fontsize=8.5, color="#374151",
+            bbox={"boxstyle": "round,pad=0.3", "fc": "white",
+                  "ec": "#d1d5db", "lw": 0.6})
+    beyond = [b for b in BUDGETS if b > clip]
+    if beyond:
+        ax.text(0.985, 0.04,
+                f"{', '.join(_kfmt(b) for b in beyond)} budgets beyond clip",
+                transform=ax.transAxes, ha="right", va="bottom",
+                fontsize=7.5, color=GRAY)
     ax.set_xlim(0, clip)
     ax.set_xlabel(f"body chars (axis clipped at {clip:,.0f}; "
                   f"max observed {_fmt(res['body_chars_max'])})")
     ax.set_ylabel("messages")
     ax.set_title("Body length distribution (20k reservoir) vs pipeline budgets")
+    _grid(ax, "y")
     _finish(fig, figdir / "07_body_length.png", CITE)
 
-    # 08 — custodian volume.
+    # 08 — custodian volume (value labels + headroom via _barh).
     fig, ax = plt.subplots(figsize=(8.5, 6))
     custs = list(res["custodians"].items())[:25]
-    _barh(ax, [k for k, _ in custs], [v for _, v in custs], "#0f766e",
+    _barh(ax, [k for k, _ in custs], [v for _, v in custs], TEAL,
           "Message volume per custodian (top 25)", xlabel="messages")
     _finish(fig, figdir / "08_custodians.png", CITE)
 
-    # 09 — recipient fan-out.
-    fan = res["fanout"]
+    # 09 — recipient fan-out on a log y-axis: fan-out 1 dominates so heavily
+    # that a linear scale flattens the entire tail into invisibility.
+    fan = res.get("fanout", {})
     fig, ax = plt.subplots(figsize=(8, 4.2))
-    fk = [str(k) for k in sorted(fan) if isinstance(k, int) and k <= 15]
-    fv = [fan[int(k)] for k in fk]
-    ax.bar(fk, fv, color="#be185d")
+    fk = [str(k) for k in range(0, 16)]
+    fv = [fan.get(k, 0) for k in range(0, 16)]
+    ax.bar(fk, fv, color=PINK)
+    ax.set_yscale("log")
+    fmax = max(fv) or 1
+    ax.set_ylim(top=fmax * 3)
+    ax.text(0.99, 0.96, "log scale — single-recipient mail dominates",
+            transform=ax.transAxes, ha="right", va="top",
+            fontsize=7.5, color=GRAY)
     ax.set_xlabel("recipients per message (to+cc+bcc; >15 not shown)")
-    ax.set_ylabel("messages")
+    ax.set_ylabel("messages (log)")
     ax.set_title("Recipient fan-out")
+    _grid(ax, "y")
     _finish(fig, figdir / "09_fanout.png", CITE)
 
     # 10 — thread-size distribution (exact, from streaming per-thread counts).
@@ -1165,7 +1324,7 @@ def make_figures(res: dict, figdir: Path) -> None:
         rd.get("depth_6_10_pct", 0.0),
         rd.get("depth_gt10_pct", 0.0),
     ]
-    bars = ax.bar(buckets, shares, color="#0e7490")
+    bars = ax.bar(buckets, shares, color=CYAN)
     for b, s in zip(bars, shares):
         ax.annotate(f"{s:.1f}%", (b.get_x() + b.get_width() / 2, s),
                     xytext=(0, 4), textcoords="offset points",
@@ -1175,6 +1334,7 @@ def make_figures(res: dict, figdir: Path) -> None:
     ax.set_ylabel("% of threads")
     ax.set_title(f"Thread-size distribution "
                  f"({rd.get('n_threads', 0):,} thread dirs, exact)")
+    _grid(ax, "y")
     _finish(fig, figdir / "10_thread_sizes.png", CITE)
 
     # 11 — exact-duplicate bodies (md5).
@@ -1183,7 +1343,7 @@ def make_figures(res: dict, figdir: Path) -> None:
     dupes = bodies_text - uniq
     fig, ax = plt.subplots(figsize=(6.5, 4.2))
     bars = ax.bar(["unique bodies", "exact duplicate\ncopies"],
-                  [uniq, dupes], color=["#15803d", "#dc2626"])
+                  [uniq, dupes], color=[GREEN, RED])
     denom = max(1, bodies_text)
     for b, v in zip(bars, [uniq, dupes]):
         ax.annotate(f"{v:,}\n({v / denom:.1%})",
@@ -1193,21 +1353,26 @@ def make_figures(res: dict, figdir: Path) -> None:
     _headroom(ax)
     ax.set_ylabel("bodies")
     ax.set_title(f"Exact-duplicate bodies (md5, n={bodies_text:,})")
+    _grid(ax, "y")
     _finish(fig, figdir / "11_duplicates.png", CITE)
 
-    # 12 — recipient role totals.
+    # 12 — recipient role totals, labeled with share of all addresses.
     fig, ax = plt.subplots(figsize=(6.5, 3.8))
     roles = ["To", "Cc", "Bcc"]
     rv = [res["to_addrs"], res["cc_addrs"], res["bcc_addrs"]]
-    bars = ax.barh(roles[::-1], rv[::-1], color="#7c3aed")
+    rtot = sum(rv) or 1
+    bars = ax.barh(roles[::-1], rv[::-1], color=VIOLET)
     rmax = max(rv) or 1
     for b, v in zip(bars, rv[::-1]):
         ax.text(v + rmax * 0.015, b.get_y() + b.get_height() / 2,
-                f"{v:,}", va="center", ha="left", fontsize=8)
+                f"{v:,} ({v / rtot:.0%})", va="center", ha="left", fontsize=8)
     _headroom(ax, is_barh=True)
     ax.set_xlim(left=0)
+    ax.xaxis.set_major_formatter(
+        plt.FuncFormatter(lambda v, _p: _kfmt(v)))
     ax.set_xlabel("total addresses across corpus")
     ax.set_title("Recipient address volume by header role")
+    _grid(ax, "x")
     _finish(fig, figdir / "12_recipient_roles.png", CITE)
 
 

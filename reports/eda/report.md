@@ -126,24 +126,24 @@ Attachment extensions (top 15):
 **Internal** (enron.com sender): 429,728 (83.1%) · **External**: 87,660 (16.9%) · **no sender parsed**: 2
 
 Reply/forward chain members (subject prefix RE:/FW:/FWD:): **189,099** (36.5%) — re 153,293, fw 35,806.
-Distinct thread dirs (maildir thread folders): **3,304**
+Distinct thread dirs (maildir thread folders): **14,999**
 
 Recipient fan-out (addresses in To/Cc/Bcc):
 
 | recipients | messages |
 |---|---|
-| 0 | 20,404 |
-| 1 | 277,114 |
-| 2 | 23,875 |
+| 0 | 20,401 |
+| 1 | 277,109 |
+| 2 | 23,873 |
 | 3 | 39,817 |
-| 4 | 11,952 |
-| 5 | 22,372 |
+| 4 | 11,950 |
+| 5 | 22,375 |
 | 6 | 8,640 |
 | 7 | 13,298 |
 | 8 | 6,981 |
 | 9 | 8,691 |
 
-Messages with CC: 127,865 · with BCC: 127,865 — **Cc and Bcc are always co-present in this dump** (a CMU corpus artifact: every message with a Cc also has a Bcc, and vice versa), so the `additional_recipients` field will double-count unless the pipeline dedupes by address.
+Messages with CC: 127,872 · with BCC: 127,872 — **Cc and Bcc are always co-present in this dump** (a CMU corpus artifact: every message with a Cc also has a Bcc, and vice versa), so the `additional_recipients` field will double-count unless the pipeline dedupes by address.
 
 ## 5. Senders
 
@@ -269,9 +269,9 @@ Primary timezone detected: **unknown** (consistent with Enron HQ in Houston/US C
 
 ## 9. Reply-chain / thread depth
 
-**Exact counts** across all 3,304 thread directories: 
-470 singletons, 2,834 multi-message threads; 
-largest thread directory holds **11,896 messages**.
+**Exact counts** across all 14,999 thread directories: 
+2,550 singletons, 12,449 multi-message threads; 
+largest thread directory holds **3,304 messages**.
 
 Full size distribution: §15 (+ `figures/10`).
 
@@ -390,11 +390,11 @@ Monthly coverage: **73 distinct months** (1980-01 → 2044-01). Peak: **2001-10*
 
 | role | total addresses | messages carrying ≥1 | avg per such message |
 |---|---|---|---|
-| To | 3,130,142 | 495,519 | 6.32 |
-| Cc | 562,720 | — | — |
-| Bcc | 562,720 | 127,865 | 4.40 |
+| To | 3,130,181 | 495,524 | 6.32 |
+| Cc | 562,789 | — | — |
+| Bcc | 562,789 | 127,872 | 4.40 |
 
-Messages with **no To-address at all** (Bcc-only or Cc-only sends): **1,467** (0.28%). These are the mass-mail / blind-copy artifacts; downstream intake should not assume every message has a To header.
+Messages with **no To-address at all** (Bcc-only or Cc-only sends): **1,465** (0.28%). These are the mass-mail / blind-copy artifacts; downstream intake should not assume every message has a To header.
 
 ## 14. Duplicates & content reuse
 
@@ -438,17 +438,17 @@ Most-repeated normalized subjects (of 126459 distinct):
 
 ## 15. Thread-size distribution (exact)
 
-3,304 thread directories · 470 singletons (14.2%) · 2,834 multi-message threads.
+14,999 thread directories · 2,550 singletons (17.0%) · 12,449 multi-message threads.
 
 | thread size | share of threads |
 |---|---|
-| 1 message | 14.2% |
-| 2 messages | 8.2% |
-| 3–5 messages | 13.3% |
-| 6–10 messages | 11.4% |
-| >10 messages | 52.8% |
+| 1 message | 17.0% |
+| 2 messages | 7.2% |
+| 3–5 messages | 33.3% |
+| 6–10 messages | 7.2% |
+| >10 messages | 35.3% |
 
-Largest thread directory: **11,896 messages**.
+Largest thread directory: **3,304 messages**.
 
 ## 16. Pipeline fit
 
