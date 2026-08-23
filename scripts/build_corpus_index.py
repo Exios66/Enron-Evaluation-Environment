@@ -207,7 +207,12 @@ def parse_one(item):
     row = parse_message(msg_path, rel)
     row["custodian"] = custodian
     row["folder"] = folder
-    row["thread"] = msg_path.name
+    parts = rel.split("/")
+    # Thread provenance: the full directory chain containing the message
+    # (<custodian>/<folder>/<subdirs>), globally unique per directory.
+    # Previously this was msg_path.name — the message FILE name — which made
+    # every "thread" a singleton and broke thread-level analysis.
+    row["thread"] = "/".join(parts[:-1])
     return row
 
 
@@ -273,10 +278,7 @@ def main_with_args(argv: list[str]) -> int:
     with args.out.open("w", encoding="utf-8") as fh:
         if n_procs <= 1:
             for custodian, folder, msg_path, rel in iter_messages(args.maildir, args.limit):
-                row = parse_message(msg_path, rel)
-                row["custodian"] = custodian
-                row["folder"] = folder
-                row["thread"] = msg_path.name
+                row = parse_one((custodian, folder, msg_path, rel))
                 if row.get("parseable"):
                     n_ok += 1
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
