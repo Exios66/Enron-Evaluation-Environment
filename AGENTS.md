@@ -2,7 +2,28 @@
 
 **Repository:** Enron-Evaluation-Environment
 **Purpose:** EDA and pipeline dataset production for the CMU Enron email corpus.
-**Last updated:** 2026-08-21
+**Last updated:** 2026-08-23
+
+---
+
+## 🏛️ Governed Repositories (Ecosystem)
+
+This repo is the **correspondence data-production node** of a governed evaluation
+family under [Exios66](https://github.com/Exios66). Artifacts flow downstream;
+nothing flows back without a versioned handoff.
+
+| Repo | Role | Coupling |
+|---|---|---|
+| [`llm-mailroom`](https://github.com/Exios66/llm-mailroom) | Multi-agent legal-document intake pipeline; owns the doc-class taxonomy (`correspondence`, `contract`, `merger_agreement`, `corporate_record`) this repo labels against | Upstream taxonomy governor |
+| **Enron-Evaluation-Environment** (this repo) | Full-corpus EDA + stratified `correspondence` dataset production for the CMU Enron corpus | — |
+| [`llm-entity-extraction`](https://github.com/Exios66/llm-entity-extraction) | Training/eval environment for legal document entity extraction & classification; consumes `pipeline.jsonl` via `build_docclass_merged.py` + the sorter's subclass dimension | Direct downstream consumer |
+| [`llm-dojo-scoring`](https://github.com/Exios66/llm-dojo-scoring) | Scoring environment; Langfuse mirror hosts the `mailroom-enron-correspondence` dataset | Downstream scoring mirror |
+| [`atticus-investigation`](https://github.com/Exios66/atticus-investigation) | LegalBench prompt-engineering eval pipeline (prompt versions × models via OpenRouter + Braintrust) | Adjacent eval environment |
+
+**Sync obligation:** when the labeler taxonomy (`correspondence_subclasses.py`)
+changes here, mirror the enum into `llm-entity-extraction`'s sorter
+(`SUBCLASS_DIMENSIONS`) and re-run its Langfuse sync — see
+[`reports/pipeline/README.md`](reports/pipeline/README.md).
 
 ---
 
@@ -40,20 +61,23 @@ scripts/
 ├── correspondence_subclasses.py    ← SHARED labeler (imported by all tools)
 ├── acquire_enron.py                ← Download + extract CMU tarball
 ├── build_corpus_index.py           ← Parse maildir → data/enron/index.jsonl
+├── dedupe.py                       ← Exact-duplicate removal → index.unique.jsonl
 ├── build_pipeline_dump.py          ← Stratified sample → pipeline.jsonl
 ├── spot_check.py                   ← Draw review sample → CSV
+├── publish_hf_dataset.py           ← HF Hub publisher → Lucius-Morningstar/enron-correspondence
 └── eda/
     ├── explore_enron.py            ← Full EDA → reports/eda/{report.md, findings.md}
     └── explore_subclasses.py       ← Subclass discovery analysis
-tests/                              ← 36 unit tests (no corpus data needed)
+.opencode/skills/hf-dataset-publish/ ← SKILL.md runbook for the Hub upload (agents: load it first)
+tests/                              ← 40 unit tests in tests/test_labeler.py (no corpus data needed)
 reports/
 ├── eda/                            ← EDA reports + figures (committed)
-│   ├── final_report.md             ← Updated report (12 sections)
+│   ├── final_report.md             ← STATIC copy of report.md — sync manually (16 sections)
 │   ├── report.md                   ← Original detailed report
 │   ├── findings.md                 ← Condensed findings
 │   ├── subclasses_discovery.md     ← Taxonomy exploration notes
 │   ├── spot_check.csv              ← Human review artifacts
-│   └── figures/                    ← 8 PNG charts (01–08)
+│   └── figures/                    ← 12 PNG charts (01–12)
 └── pipeline/
     └── README.md                   ← Pipeline integration wiring doc
 ```
@@ -95,10 +119,10 @@ Reads `data/enron/index.jsonl` and produces reports + figures.
 **Output destinations:**
 - `reports/eda/report.md` — Full narrative EDA report
 - `reports/eda/findings.md` — Condensed bullet-point summary
-- `reports/eda/figures/` — 8 PNG bar/histogram charts
+- `reports/eda/figures/` — 12 PNG charts (01–12)
 - `reports/eda/final_report.md` — Pre-computed final report (committed static copy)
 
-**Important:** `final_report.md` is STATIC — it does not regenerate when you run `explore_enron.py`. After making changes to the analysis engine that would affect the final report's numbers, manually verify `final_report.md` matches the live output. Last synced: 2026-08-21.
+**Important:** `final_report.md` is STATIC — it does not regenerate when you run `explore_enron.py`. After making changes to the analysis engine that would affect the final report's numbers, manually verify `final_report.md` matches the live output. Last synced: 2026-08-23.
 
 **To generate fresh reports without figures:**
 ```bash
@@ -134,7 +158,7 @@ Draws a labeled review sample from the index. Outputs a CSV where a human (Jack)
 Tests require NO corpus data. They construct minimal synthetic index-row dicts inline.
 
 ```bash
-# Run everything (expected: 36 passed)
+# Run everything (expected: 40 passed)
 pytest tests/ -v
 
 # Run just classification tests
@@ -194,7 +218,7 @@ When updating EDA analysis code, follow this checklist:
 
 ### Updating the labeler taxonomy
 1. Edit `correspondence_subclasses.py` — add constants, regexes, or enum entries.
-2. Write a corresponding test in `tests/__init__.py` BEFORE merging.
+2. Write a corresponding test in `tests/test_labeler.py` BEFORE merging.
 3. Verify no existing tests break.
 4. If changing enum order, document the rationale.
 5. Update this AGENTS.md § "Key Files" section noting the change.
@@ -205,6 +229,23 @@ When updating EDA analysis code, follow this checklist:
 python scripts/build_pipeline_dump.py --dry-run   # preview plan
 python scripts/build_pipeline_dump.py              # execute
 ```
+
+### Publishing to Hugging Face Hub
+
+**Agents must load `.opencode/skills/hf-dataset-publish/SKILL.md` before
+publishing.** Condensed version:
+
+1. Build the index if missing (`python scripts/build_corpus_index.py`).
+2. Smoke test staging: `python scripts/publish_hf_dataset.py --dry-run --limit 5000`
+3. Publish with a write-scoped `HF_TOKEN`: `python scripts/publish_hf_dataset.py`
+4. Require `VERIFY: GREEN` (Hub LFS sha256 == local sha256) before claiming success.
+
+Invariants: family split rule `md5(filename) % 10 == 0 → test`; labels ONLY from
+the shared labeler; schema guard may never be bypassed (Hub viewer crashes on
+partial-null schemas); card must keep the honest known-gaps list. Staging in
+`data/hf_export/` is gitignored and ephemeral — regenerate, never commit.
+The sibling repo's `publish_enron_correspondence.py` is row-compatible;
+do not fork the spec — sync changes both ways.
 
 ---
 

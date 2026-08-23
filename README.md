@@ -12,6 +12,23 @@ doc class (emails, memos, letters, notices, demands), with a second-level
 **`expected_subclass`** dimension covering every correspondence type present
 in the corpus.
 
+## Governed Repository Ecosystem
+
+This repo is the **correspondence data-production node** of a governed
+evaluation family. Artifacts flow downstream; nothing flows back without a
+versioned handoff.
+
+| Repository | Role | Relationship |
+|---|---|---|
+| [`llm-mailroom`](https://github.com/Exios66/llm-mailroom) | Multi-agent legal-document intake pipeline; owns the doc-class taxonomy (`correspondence`, `contract`, `merger_agreement`, `corporate_record`) that this repo's labels target | Upstream taxonomy governor |
+| **Enron-Evaluation-Environment** (this repo) | Full-corpus EDA + stratified `correspondence` dataset production for the CMU Enron corpus | — |
+| [`llm-entity-extraction`](https://github.com/Exios66/llm-entity-extraction) | Training & evaluation environment for legal document entity extraction / classification / summarization; consumes `data/enron/pipeline.jsonl` via `build_docclass_merged.py` + the sorter's subclass dimension | Primary downstream consumer |
+| [`llm-dojo-scoring`](https://github.com/Exios66/llm-dojo-scoring) | Scoring environment + Langfuse dataset mirror (hosts the `mailroom-enron-correspondence` mirrored dataset) | Downstream scoring mirror |
+| [`atticus-investigation`](https://github.com/Exios66/atticus-investigation) | LegalBench prompt-engineering evaluation pipeline (prompt versions × models via OpenRouter + Braintrust) | Adjacent evaluation environment |
+
+Handoff contract and wiring commands:
+[`reports/pipeline/README.md`](reports/pipeline/README.md).
+
 ## Repo layout
 
 ```
@@ -27,6 +44,7 @@ in the corpus.
 │   ├── dedupe.py                       # Exact-duplicate removal → data/enron/index.unique.jsonl
 │   ├── build_pipeline_dump.py          # Stratified sample → data/enron/pipeline.jsonl
 │   ├── spot_check.py                   # Labeled review sample → reports/eda/spot_check.csv
+│   ├── publish_hf_dataset.py           # HF Hub publisher → Lucius-Morningstar/enron-correspondence
 │   └── eda/
 │       ├── explore_enron.py            # Full-corpus EDA → reports/eda/{report.md, findings.md}
 │       └── explore_subclasses.py       # Subclass discovery & edge-case analysis
@@ -54,6 +72,9 @@ in the corpus.
 │       └── README.md                   # Wiring into llm-entity-extraction
 ├── .gitignore                          # Data dirs, artifacts, env vars
 ├── .gitattributes                      # Encoding / CRLF config
+├── .opencode/
+│   └── skills/
+│       └── hf-dataset-publish/SKILL.md # Agent runbook for the Hub upload
 └── pyproject.toml                      # Project metadata & tool config
 ```
 
@@ -103,7 +124,7 @@ python scripts/build_corpus_index.py --limit 1000   # smoke test with subset
 
 ## Test Harness
 
-A comprehensive **36-test** validation suite verifies the entire labeler pipeline
+A comprehensive **40-test** validation suite verifies the entire labeler pipeline
 without requiring corpus data. Tests cover:
 
 | Category | Tests | What they validate |
@@ -118,6 +139,7 @@ without requiring corpus data. Tests cover:
 | Determinism | 1 | Same input always yields same output |
 | Index row schema | 3 | Required fields, recipient structure, ISO-8601 dates |
 | Pipeline dump integrity | 1 | Expected doc-class fields present |
+| Dedupe integrity | 4 | Body hash matches EDA semantics, first-occurrence-wins dedupe, empty-input safety, no duplicate bodies in pipeline samples |
 
 ```bash
 # Run everything
@@ -159,6 +181,31 @@ Row shape matches the flat streamer-dump format consumed by
 See [`reports/pipeline/README.md`](reports/pipeline/README.md) for the wiring commands
 into `llm-entity-extraction` (`build_docclass_merged.py`, sorter subclass dimension,
 Langfuse mirror).
+
+## Hugging Face Publication
+
+The full cleaned corpus publishes to the Hub as
+[`Lucius-Morningstar/enron-correspondence`](https://huggingface.co/datasets/Lucius-Morningstar/enron-correspondence)
+— one row per message with heuristic subclass GT (`expected_subclass` +
+on-row `label_evidence`) and the family-wide deterministic split
+(`md5(filename) % 10 == 0` → test, ~10%).
+
+```bash
+# Smoke test staging (no network)
+python scripts/publish_hf_dataset.py --dry-run --limit 5000
+
+# Full publish (~517k rows; requires HF_TOKEN with write scope)
+export HF_TOKEN=hf_...
+python scripts/publish_hf_dataset.py
+```
+
+The publisher enforces a **schema guard** (no partial-null schemas — they crash
+the Hub viewer), stages an honest manifest + dataset card into gitignored
+`data/hf_export/`, uploads via `huggingface_hub`, then verifies the Hub LFS
+sha256 against the local file (`VERIFY: GREEN`). Agents: load the
+`.opencode/skills/hf-dataset-publish/SKILL.md` runbook before publishing.
+Row-compatible sibling implementation:
+[`llm-entity-extraction/scripts/datasets/publish_enron_correspondence.py`](https://github.com/Exios66/llm-entity-extraction).
 
 ## New Analysis Sections (v2 Update)
 
@@ -216,5 +263,5 @@ python scripts/build_corpus_index.py     # parse maildir -> index.jsonl
 python scripts/eda/explore_enron.py      # EDA -> reports/eda/
 python scripts/build_pipeline_dump.py    # sample -> pipeline.jsonl (+ dry-run)
 python scripts/spot_check.py             # review artifact -> reports/eda/spot_check.csv
-pytest tests/ -v                         # 36/36 validation pass
+pytest tests/ -v                         # 40/40 validation pass
 ```
