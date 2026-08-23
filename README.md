@@ -1,197 +1,258 @@
-# Enron-Evaluation-Environment
+<div align="center">
 
-Exploratory data analysis of the CMU classic Enron email corpus, and the
-production of a pipeline-ready **correspondence** dataset for the
-llm-mailroom document-processing pipeline (sibling repo
-[`llm-entity-extraction`](https://github.com/Exios66/llm-entity-extraction),
-which ingests CUAD contracts + MAUD merger agreements + EDGAR S-1 corporate
-records into its doc-class taxonomy).
+# ✉️ Enron-Evaluation-Environment
+
+**Exploratory data analysis of the CMU classic Enron email corpus, and the
+production of a pipeline-ready `correspondence` dataset for the llm-mailroom
+document-processing pipeline.**
 
 The Enron corpus stands in for the mailroom taxonomy's **`correspondence`**
 doc class (emails, memos, letters, notices, demands), with a second-level
 **`expected_subclass`** dimension covering every correspondence type present
 in the corpus.
 
-## Governed Repository Ecosystem
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/pytest-74%2F74_passing-brightgreen)](tests/)
+[![Status](https://img.shields.io/badge/status-production-success)](reports/eda/final_report.md)
+[![Last Commit](https://img.shields.io/github/last-commit/Exios66/Enron-Evaluation-Environment?logo=github&label=updated)](https://github.com/Exios66/Enron-Evaluation-Environment/commits/main)
+[![Repo Size](https://img.shields.io/github/repo-size/Exios66/Enron-Evaluation-Environment?logo=github)](https://github.com/Exios66/Enron-Evaluation-Environment)
+
+[![Corpus](https://img.shields.io/badge/corpus-517%2C390_emails-2563eb)](reports/eda/report.md)
+[![Custodians](https://img.shields.io/badge/custodians-~150-059669)](reports/eda/report.md)
+[![Taxonomy](https://img.shields.io/badge/subclasses-10_keys-8b5cf6)](reports/pipeline/README.md)
+[![🤗 Dataset](https://img.shields.io/badge/%F0%9F%A4%97_Dataset-enron--correspondence-fbe425?logo=huggingface&logoColor=black)](https://huggingface.co/datasets/Lucius-Morningstar/enron-correspondence)
+[![Sibling Node](https://img.shields.io/badge/sibling-claims--data--eda-0ea5e9)](https://github.com/Exios66/claims-data-eda)
+
+<img src="reports/eda/figures/01_subclasses.png" alt="Correspondence subclass distribution across the 517,390-message Enron corpus" width="720"/>
+
+</div>
+
+---
+
+## 📊 Corpus at a Glance
+
+| Metric | Value |
+|---|---|
+| Parseable emails (CMU maildir, 20150507 tarball) | **517,390** |
+| Custodians (~150 Enron employees) | ~150 |
+| Byte-exact duplicate bodies (md5) | **52.2%** — deduped by construction in sampling |
+| Subclass taxonomy | 10 keys, corpus-complete |
+| Pipeline sample (`data/enron/pipeline.jsonl`) | ~400 stratified, duplicate-free |
+| HF mirror split | `md5(filename) % 10 == 0` → test (~10%) |
+
+## 🌐 Governed Repository Ecosystem
 
 This repo is the **correspondence data-production node** of a governed
-evaluation family. Artifacts flow downstream; nothing flows back without a
-versioned handoff.
+evaluation family under [@Exios66](https://github.com/Exios66). Artifacts flow
+downstream; nothing flows back without a versioned handoff.
 
-| Repository | Role | Relationship |
+| Repository | Role | Coupling |
 |---|---|---|
-| [`llm-mailroom`](https://github.com/Exios66/llm-mailroom) | Multi-agent legal-document intake pipeline; owns the doc-class taxonomy (`correspondence`, `contract`, `merger_agreement`, `corporate_record`) that this repo's labels target | Upstream taxonomy governor |
+| [`llm-mailroom`](https://github.com/Exios66/llm-mailroom) | Multi-agent legal-document intake pipeline; owns the doc-class taxonomy (`correspondence`, `contract`, `merger_agreement`, `corporate_record`, …) this repo labels against | ⬆️ Upstream taxonomy governor |
 | **Enron-Evaluation-Environment** (this repo) | Full-corpus EDA + stratified `correspondence` dataset production for the CMU Enron corpus | — |
-| [`llm-entity-extraction`](https://github.com/Exios66/llm-entity-extraction) | Training & evaluation environment for legal document entity extraction / classification / summarization; consumes `data/enron/pipeline.jsonl` via `build_docclass_merged.py` + the sorter's subclass dimension | Primary downstream consumer |
-| [`llm-dojo-scoring`](https://github.com/Exios66/llm-dojo-scoring) | Scoring environment + Langfuse dataset mirror (hosts the `mailroom-enron-correspondence` mirrored dataset) | Downstream scoring mirror |
-| [`atticus-investigation`](https://github.com/Exios66/atticus-investigation) | LegalBench prompt-engineering evaluation pipeline (prompt versions × models via OpenRouter + Braintrust) | Adjacent evaluation environment |
+| [`llm-entity-extraction`](https://github.com/Exios66/llm-entity-extraction) | Training & eval environment for legal-document entity extraction / classification / summarization; consumes `data/enron/pipeline.jsonl` via `build_docclass_merged.py` + the sorter's subclass dimension | ⬇️ Primary downstream consumer |
+| [`llm-dojo-scoring`](https://github.com/Exios66/llm-dojo-scoring) | Scoring environment + Langfuse dataset mirror (`mailroom-enron-correspondence`) | ⬇️ Downstream scoring mirror |
+| [`claims-data-eda`](https://github.com/Exios66/claims-data-eda) | Sibling **insurance-claims** data-production node (CMS DE-SynPUF) — feeds the mailroom's `insurance_claim` doc class | ↔️ Sibling node |
+| [`atticus-investigation`](https://github.com/Exios66/atticus-investigation) | LegalBench prompt-engineering evaluation pipeline (prompt versions × models via OpenRouter + Braintrust) | ↔️ Adjacent evaluation environment |
 
-Handoff contract and wiring commands:
-[`reports/pipeline/README.md`](reports/pipeline/README.md).
+Handoff contract and wiring commands: [`reports/pipeline/README.md`](reports/pipeline/README.md).
 
-## Repo layout
+## 🔍 Headline Findings
 
-```
-├── AGENTS.md                           # Agent-facing operational guide
-├── README.md                           # This file
-├── tests/                              # ✅ 36/36 validation harness
-│   ├── __init__.py                     # Unit tests (no corpus data needed)
-│   └── conftest.py                     # pytest fixtures
-├── scripts/                            # Core pipeline & analysis tools
-│   ├── correspondence_subclasses.py    # Shared heuristic labeler (10-key taxonomy)
-│   ├── acquire_enron.py                # Download + verify + extract CMU tarball
-│   ├── build_corpus_index.py           # Parse maildir → data/enron/index.jsonl
-│   ├── dedupe.py                       # Exact-duplicate removal → data/enron/index.unique.jsonl
-│   ├── build_pipeline_dump.py          # Stratified sample → data/enron/pipeline.jsonl
-│   ├── spot_check.py                   # Labeled review sample → reports/eda/spot_check.csv
-│   ├── publish_hf_dataset.py           # HF Hub publisher → Lucius-Morningstar/enron-correspondence
-│   └── eda/
-│       ├── explore_enron.py            # Full-corpus EDA → reports/eda/{report.md, findings.md}
-│       └── explore_subclasses.py       # Subclass discovery & edge-case analysis
-├── reports/
-│   ├── eda/                            # Committed EDA output
-│   │   ├── final_report.md             # ✅ Updated: correct numbers, 16 sections, new analysis
-│   │   ├── report.md                   # Original detailed EDA report
-│   │   ├── findings.md                 # Condensed key findings
-│   │   ├── subclasses_discovery.md     # Taxonomy exploration notes
-│   │   ├── spot_check.csv              # Human review artifacts
-│   │   └── figures/                    # 12 published PNG charts
-│   │       ├── 01_subclasses.png       # Subclass distribution (horizontal bars)
-│   │       ├── 02_hour_of_day.png      # Message volume by hour (UTC)
-│   │       ├── 03_day_of_week.png      # Message volume by weekday
-│   │       ├── 04_monthly_volume.png   # Monthly volume timeline
-│   │       ├── 05_internal_external.png # Internal vs external senders
-│   │       ├── 06_top_senders.png      # Top 20 senders
-│   │       ├── 07_body_length.png      # Body length histogram w/ budget lines
-│   │       ├── 08_custodians.png       # Message volume per custodian
-│   │       ├── 09_fanout.png           # Recipient fan-out
-│   │       ├── 10_thread_sizes.png     # Thread-size distribution (exact)
-│   │       ├── 11_duplicates.png       # Exact-duplicate bodies (md5)
-│   │       └── 12_recipient_roles.png  # To/Cc/Bcc address totals
-│   └── pipeline/                       # Pipeline integration docs
-│       └── README.md                   # Wiring into llm-entity-extraction
-├── .gitignore                          # Data dirs, artifacts, env vars
-├── .gitattributes                      # Encoding / CRLF config
-├── .opencode/
-│   └── skills/
-│       └── hf-dataset-publish/SKILL.md # Agent runbook for the Hub upload
-└── pyproject.toml                      # Project metadata & tool config
-```
+<table>
+<tr><td width="50%">
 
-## Corpus
+### 52.2% of bodies are byte-exact duplicates
+Cross-custodian cc'ing, saved sent-folder copies, mass-mail blasts. Sampling
+from the raw index would repeatedly draw the same text — so the sampler
+**dedupes by construction** and a standalone
+[`dedupe.py`](scripts/dedupe.py) produces a fully deduplicated index.
 
-CMU classic Enron email dataset (public, no license required):
+</td><td width="50%">
 
-- **Source**: https://www.cs.cmu.edu/~enron/enron_mail_20150507.tar.gz
-- **Contents**: 517,390 parseable emails from ~150 Enron employees (maildir layout),
-  including attachments (`<msg>_files/` sibling dirs).
-- **Taxonomy**: 10-key `expected_subclass` dimension covering all correspondence types found in the corpus.
+### A 10-key taxonomy, data-necessitated
+The `expected_subclass` enum was derived from actual corpus patterns —
+with **false-positive mitigation** built in (energy-market "demand"
+vocabulary excluded; reply/forward chains can't masquerade as memos).
 
-## Quick Start
+</td></tr>
+<tr><td width="50%">
 
-Get the corpus and reproduce the full EDA:
+### Deterministic labeling
+Classification is a pure function of index-row fields — rebuilds produce
+byte-identical results, verified by the 74-test harness.
+
+</td><td width="50%">
+
+### Zero attachment parts
+This CMU text-only dump contains no inline attachment parts; binaries live
+only in `<msg>_files/` sibling directories — no attachment-handling path
+needed for correspondence intake.
+
+</td></tr>
+</table>
+
+<p align="center">
+  <img src="reports/eda/figures/02_hour_of_day.png" alt="Message volume by hour (UTC)" width="49%"/>
+  <img src="reports/eda/figures/04_monthly_volume.png" alt="Monthly volume timeline" width="49%"/>
+</p>
+<p align="center">
+  <img src="reports/eda/figures/07_body_length.png" alt="Body length histogram with budget lines" width="49%"/>
+  <img src="reports/eda/figures/11_duplicates.png" alt="Exact-duplicate bodies" width="49%"/>
+</p>
+
+<details>
+<summary><b>🖼️ Full figure gallery (12 charts)</b></summary>
+
+| # | Figure | Insight |
+|---|---|---|
+| 01 | [Subclasses](reports/eda/figures/01_subclasses.png) | 10-key subclass distribution (horizontal bars) |
+| 02 | [Hour of day](reports/eda/figures/02_hour_of_day.png) | Message volume by hour (UTC) |
+| 03 | [Day of week](reports/eda/figures/03_day_of_week.png) | Volume by weekday |
+| 04 | [Monthly volume](reports/eda/figures/04_monthly_volume.png) | Timeline across the corpus window |
+| 05 | [Internal vs external](reports/eda/figures/05_internal_external.png) | Sender domain split |
+| 06 | [Top senders](reports/eda/figures/06_top_senders.png) | Top 20 senders |
+| 07 | [Body length](reports/eda/figures/07_body_length.png) | Histogram w/ token-budget lines |
+| 08 | [Custodians](reports/eda/figures/08_custodians.png) | Volume per custodian |
+| 09 | [Fan-out](reports/eda/figures/09_fanout.png) | Recipient fan-out distribution |
+| 10 | [Thread sizes](reports/eda/figures/10_thread_sizes.png) | Thread-size distribution (exact) |
+| 11 | [Duplicates](reports/eda/figures/11_duplicates.png) | Byte-exact duplicate bodies (md5) |
+| 12 | [Recipient roles](reports/eda/figures/12_recipient_roles.png) | To/Cc/Bcc address totals |
+
+</details>
+
+Full analysis: **[`reports/eda/final_report.md`](reports/eda/final_report.md)** (16 sections) · condensed: **[`reports/eda/findings.md`](reports/eda/findings.md)**
+
+## 🚀 Quick Start
 
 ```bash
-# 1. Acquire the raw corpus (~423 MB tarball, auto-extracts to data/raw/maildir/)
+git clone https://github.com/Exios66/Enron-Evaluation-Environment.git
+cd Enron-Evaluation-Environment
+
+# 1️⃣ Acquire the raw corpus (~423 MB tarball, auto-extracts to data/raw/maildir/)
 python scripts/acquire_enron.py
 
-# 2. Build the full-corpus index (JSONL stream of parsed messages)
+# 2️⃣ Build the full-corpus index (JSONL stream of parsed messages)
 python scripts/build_corpus_index.py
 
-# 3. Run the full EDA — generates reports + 12 figures
+# 3️⃣ Run the full EDA — generates reports + 12 figures
 python scripts/eda/explore_enron.py
 
-# 4. Build the pipeline-ready stratified sample (skips exact-duplicate bodies)
+# 4️⃣ Build the pipeline-ready stratified sample (skips exact-duplicate bodies)
 python scripts/build_pipeline_dump.py
 
-# 5. (Optional) Regenerate a fully deduplicated corpus index
+# 5️⃣ (Optional) Regenerate a fully deduplicated corpus index
 python scripts/dedupe.py --index data/enron/index.jsonl --out data/enron/index.unique.jsonl
 
-# 6. Draw a labeled spot-check sample for human review
+# 6️⃣ Draw a labeled spot-check sample for human review
 python scripts/spot_check.py
 
-# 7. Validate correctness with the test harness (no corpus data needed)
-pytest tests/ -v
+# 7️⃣ Validate correctness with the test harness (no corpus data needed)
+pytest tests/ -v                       # 74/74 passing
 ```
 
-Dry-run mode for each script:
+<details>
+<summary><b>Smoke-test flags</b></summary>
 
 ```bash
 python scripts/acquire_enron.py --dry-run
 python scripts/build_corpus_index.py --dry-run
-python scripts/build_corpus_index.py --limit 1000   # smoke test with subset
+python scripts/build_corpus_index.py --limit 1000   # subset smoke test
 ```
 
-## Test Harness
+</details>
 
-A comprehensive **40-test** validation suite verifies the entire labeler pipeline
-without requiring corpus data. Tests cover:
+## 🧾 Subclass Dimension (comprehensive enum)
 
-| Category | Tests | What they validate |
-|----------|-------|--------------------|
-| Basic classification | 9 | All 10 subclass keys reachable via representative samples |
-| Forward stripping | 4 | `_strip_forwarded()` correctly isolates own-message content |
-| Attorney detection | 5 | Law-firm domains fire; false positives (`partner`, `legal`) blocked |
-| Demand false positives | 4 | Energy-market "demand" terms (capacity, TCF) stay in `email` |
-| Letter boundary cases | 3 | Salutation+closing works; marketing spam excluded; FW: disqualifies |
-| Subject analysis | 3 | Length extraction, whitespace handling, empty strings |
-| Taxonomy invariants | 3 | Key enum integrity, classify_many safety, no spurious `other` |
-| Determinism | 1 | Same input always yields same output |
-| Index row schema | 3 | Required fields, recipient structure, ISO-8601 dates |
-| Pipeline dump integrity | 1 | Expected doc-class fields present |
-| Dedupe integrity | 4 | Body hash matches EDA semantics, first-occurrence-wins dedupe, empty-input safety, no duplicate bodies in pipeline samples |
+Every correspondence type present in the corpus has a key
+([`scripts/correspondence_subclasses.py`](scripts/correspondence_subclasses.py) —
+the EDA's §2 table lists the corpus-wide distribution; the `other` residual is
+the coverage measure):
 
-```bash
-# Run everything
-pytest tests/ -v
+| key | label | what it is |
+|---|---|---|
+| `email` | Email | ordinary email correspondence (the default) |
+| `memo` | Memorandum | interoffice memoranda (TO/FROM/DATE/RE blocks) |
+| `letter` | Letter | formal letters (salutation + closing, external sender) |
+| `notice` | Notice | formal notices (litigation hold, termination, notice of …) |
+| `demand` | Demand | demands/demand letters from non-attorney senders |
+| `attorney_demand` | Attorney Demand | demands sent by attorneys / law firms |
+| `press_release` | Press Release | press/news releases distributed over email |
+| `meeting_request` | Meeting Request | calendar invitations / meeting requests |
+| `voicemail` | Voicemail | voicemail transcriptions |
+| `other` | Other | unparseable / non-email files (control slice) |
 
-# Run just the labeler tests (fastest path)
-pytest tests/ -k labeler -v
+`build_pipeline_dump.py` enforces the **coverage contract**: the sample's
+subclass set must equal the corpus's present subclass set (exit code 2 +
+explicit message on a miss), so the dump can never silently drop a
+correspondence type.
 
-# See coverage
-pip install pytest-cov && pytest tests/ --cov=scripts/correspondence_subclasses
-```
+## 📦 Pipeline Output Shape
 
-## Pipeline Output
+`data/enron/pipeline.jsonl` (gitignored, regenerable) — the flat
+streamer-dump format consumed by
+[`llm-entity-extraction`](https://github.com/Exios66/llm-entity-extraction)'s
+doc-class eval runners:
 
-`data/enron/pipeline.jsonl` (gitignored, regenerable) is the handoff artifact.
-Row shape matches the flat streamer-dump format consumed by
-`llm-entity-extraction`'s doc-class eval runners:
-
-```json
+```jsonc
 {
-  "filename": "...",
-  "doc_text": "...",
+  "filename": "maildir/kaminski-v/.../235.",
+  "doc_text": "FROM: ...\nTO: ...\nDATE: ...\nSUBJECT: ...\n---\n<body>",
   "prompt": "",
   "expected": "correspondence",
-  "expected_subclass": "email",
+  "expected_subclass": "attorney_demand",
   "metadata": {
-    "sender": "...",
-    "recipients": [...],
+    "sender_addr": "...",
+    "recipients": ["..."],
     "date": "...",
     "subject": "...",
-    "thread": "...",
-    "attachments": [...],
-    "custodian": "...",
+    "attachments": [],
+    "custodian": "kaminski-v",
+    "subclass_evidence": "demand markers + law-firm domain velaw.com",
     "source_dataset": "enron-cmu-20150507"
   }
 }
 ```
 
-See [`reports/pipeline/README.md`](reports/pipeline/README.md) for the wiring commands
-into `llm-entity-extraction` (`build_docclass_merged.py`, sorter subclass dimension,
-Langfuse mirror).
+`metadata` carries the full header/attachment/provenance fields — usable as
+GT for the `correspondence_specialist`'s sender/recipient/date fields.
 
-## Hugging Face Publication
+## 🧪 Test Harness
 
-The full cleaned corpus publishes to the Hub as
-[`Lucius-Morningstar/enron-correspondence`](https://huggingface.co/datasets/Lucius-Morningstar/enron-correspondence)
-— one row per message with heuristic subclass GT (`expected_subclass` +
-on-row `label_evidence`) and the family-wide deterministic split
-(`md5(filename) % 10 == 0` → test, ~10%).
+A **74-test** validation suite verifies the entire labeler pipeline without
+requiring corpus data:
+
+| Category | Coverage |
+|----------|----------|
+| Basic classification | all 10 subclass keys reachable via representative samples |
+| Forward stripping | `_strip_forwarded()` isolates own-message content |
+| Attorney detection | law-firm domains fire; `partner`/`legal` false positives blocked |
+| Demand false positives | energy-market "demand" terms (capacity, TCF) stay in `email` |
+| Letter boundary cases | salutation+closing works; marketing spam excluded; FW: disqualifies |
+| Subject analysis | length extraction, whitespace handling, empty strings |
+| Taxonomy invariants | key enum integrity, `classify_many` safety, no spurious `other` |
+| Determinism | same input → same output, byte-for-byte |
+| Index row schema | required fields, recipient structure, ISO-8601 dates |
+| Pipeline dump integrity | expected doc-class fields present |
+| Dedupe integrity | shared body-hash semantics, first-occurrence-wins, no dup bodies in samples |
+| Content topics & sentiment | KANBAN-079 enrichment labelers |
 
 ```bash
-# Smoke test staging (no network)
+pytest tests/ -v                                   # everything
+pytest tests/ -k labeler -v                        # labeler only (fastest)
+pip install pytest-cov && pytest tests/ --cov=scripts/correspondence_subclasses
+```
+
+## 🤗 Hugging Face Publication
+
+The full cleaned corpus publishes to the Hub as
+[**`Lucius-Morningstar/enron-correspondence`**](https://huggingface.co/datasets/Lucius-Morningstar/enron-correspondence)
+— one row per message with heuristic subclass GT (`expected_subclass` +
+on-row `label_evidence`) and the family-wide deterministic split
+(`md5(filename) % 10 == 0` → test, ~10%):
+
+```bash
+# Smoke-test staging (no network)
 python scripts/publish_hf_dataset.py --dry-run --limit 5000
 
 # Full publish (~517k rows; requires HF_TOKEN with write scope)
@@ -199,69 +260,73 @@ export HF_TOKEN=hf_...
 python scripts/publish_hf_dataset.py
 ```
 
-The publisher enforces a **schema guard** (no partial-null schemas — they crash
-the Hub viewer), stages an honest manifest + dataset card into gitignored
-`data/hf_export/`, uploads via `huggingface_hub`, then verifies the Hub LFS
-sha256 against the local file (`VERIFY: GREEN`). Agents: load the
-`.opencode/skills/hf-dataset-publish/SKILL.md` runbook before publishing.
-Row-compatible sibling implementation:
+The publisher enforces a **schema guard** (no partial-null schemas — they
+crash the Hub viewer), stages an honest manifest + dataset card into
+gitignored `data/hf_export/`, uploads via `huggingface_hub`, then verifies the
+Hub LFS sha256 against the local file (`VERIFY: GREEN`). Agents: load
+[`.opencode/skills/hf-dataset-publish/SKILL.md`](.opencode/skills/hf-dataset-publish/SKILL.md)
+before publishing. Row-compatible sibling implementation:
 [`llm-entity-extraction/scripts/datasets/publish_enron_correspondence.py`](https://github.com/Exios66/llm-entity-extraction).
 
-## New Analysis Sections (v2 Update)
+## 🧩 Key Design Decisions
 
-The EDA engine (`explore_enron.py`) now produces **12 analysis sections** instead of 8,
-adding previously-missing dimensions:
+- **Labeler heuristics are data-necessitated, not theoretical** — derived from
+  actual Enron corpus patterns, deterministic, with built-in false-positive
+  mitigation.
+- **Correlation vs classification**: the `notice`/`demand` overlap is the
+  trickiest boundary (`DEMAND FOR PAYMENT` can be both); priority order in the
+  labeler ensures legal-demand semantics take precedence.
+- **Shared hash, three consumers**: one body-hash function feeds the EDA's
+  duplicate counts, the sampler, and the dedupe tool — all three report
+  directly comparable numbers.
+- **Attachment handling**: none needed for this text-only dump (see findings).
 
-| Section | What it adds |
-|---------|-------------|
-| §7b | Body-length correlation per subclass (does doc type correlate with size?) |
-| §8 | Timezone distribution & temporal patterns across all date headers |
-| §9 | Reply-chain / thread depth estimation via sampled multi-message threads |
-| §10 | Per-custodian subclass composition matrix (top 10 custodians) |
-| §11 | Subject-line length percentiles (p0–p100) |
-| §12 | Pipeline fit assessment (all budgets updated to reflect new corpus stats) |
+<details>
+<summary><b>📁 Repo layout</b></summary>
 
-See [`reports/eda/final_report.md`](reports/eda/final_report.md) for the complete updated report.
+```
+├── AGENTS.md                           # Agent-facing operational guide
+├── tests/                              # ✅ 74/74 validation harness
+├── scripts/
+│   ├── correspondence_subclasses.py    # Shared heuristic labeler (10-key taxonomy)
+│   ├── acquire_enron.py                # Download + verify + extract CMU tarball
+│   ├── build_corpus_index.py           # Parse maildir → data/enron/index.jsonl
+│   ├── dedupe.py                       # Exact-duplicate removal → index.unique.jsonl
+│   ├── build_pipeline_dump.py          # Stratified sample → data/enron/pipeline.jsonl
+│   ├── spot_check.py                   # Labeled review sample → reports/eda/spot_check.csv
+│   ├── publish_hf_dataset.py           # HF Hub publisher → Lucius-Morningstar/enron-correspondence
+│   └── eda/
+│       ├── explore_enron.py            # Full-corpus EDA → reports/eda/{report.md, findings.md}
+│       └── explore_subclasses.py       # Subclass discovery & edge-case analysis
+├── reports/
+│   ├── eda/                            # Committed EDA output (final_report, findings, 12 figures)
+│   └── pipeline/README.md              # Wiring into llm-entity-extraction
+└── .opencode/skills/hf-dataset-publish/SKILL.md   # Agent runbook for the Hub upload
+```
 
-## Deduplication (v2.1)
+</details>
 
-The full-corpus EDA found **52.2% of non-empty bodies are byte-exact duplicates**
-(md5 over raw body text) — cross-custodian cc'ing, saved sent-folder copies, and
-mass-mail blasts. Sampling from the raw index would repeatedly draw the same
-underlying text under different filenames.
-
-- **`scripts/dedupe.py`** — standalone tool; streams the index and keeps the
-  first occurrence per distinct body hash (`data/enron/index.unique.jsonl`).
-- **`build_pipeline_dump.py`** — dedupes *by construction*: every candidate
-  row's body is hashed with the identical scheme and repeats are skipped, so no
-  stratified sample can ever contain two rows with identical text.
-- Empty-body rows are never treated as duplicates of each other (they carry
-  distinct headers/paths), mirroring the EDA's hashing rule.
-- One shared hash function feeds the EDA's §14 duplicate counts, the sampler,
-  and the dedupe tool, so all three report directly comparable numbers.
-  Unit-tested in `tests/test_labeler.py::TestDedupe` (40 tests total).
-
-## Key Design Decisions
-
-### Labeler Heuristics
-- The taxonomy is **data-necessitated**, not theoretical — derived from actual Enron corpus patterns.
-- **False positive mitigation** is built-in: energy-market "demand" vocabulary (capacity, TCF volumes) deliberately excluded; marketing clickbait filtered from `letter`; reply/forward chains don't masquerade as memos/demands/releases.
-- Labeling is **deterministic** — pure function of index-row fields; rebuilds produce identical results byte-for-byte.
-
-### Correlation vs Classification
-- The `notice`/`demand` overlap is the trickiest classification boundary. `DEMAND FOR PAYMENT` can be a demand letter AND itself serve as a notice. Priority order in the labeler ensures legal-demand semantics take precedence.
-
-### Attachment Handling
-- This CMU text-only dump contains zero attachment email parts. Binary files exist only in `<msg>_files/` sibling directories (Excel spreadsheets, PDFs) — separate from message content. No attachment-handling path needed for the current correspondence intake.
-
-## Reproduction Log
+## 🔁 Reproduction Log
 
 ```bash
-# Full pipeline reproduction
 python scripts/acquire_enron.py          # download + extract (~423 MB tarball)
 python scripts/build_corpus_index.py     # parse maildir -> index.jsonl
 python scripts/eda/explore_enron.py      # EDA -> reports/eda/
 python scripts/build_pipeline_dump.py    # sample -> pipeline.jsonl (+ dry-run)
 python scripts/spot_check.py             # review artifact -> reports/eda/spot_check.csv
-pytest tests/ -v                         # 40/40 validation pass
+pytest tests/ -v                         # 74/74 validation pass
 ```
+
+---
+
+<div align="center">
+
+**[llm-mailroom](https://github.com/Exios66/llm-mailroom)** ·
+**[llm-entity-extraction](https://github.com/Exios66/llm-entity-extraction)** ·
+**[llm-dojo-scoring](https://github.com/Exios66/llm-dojo-scoring)** ·
+**[claims-data-eda](https://github.com/Exios66/claims-data-eda)** ·
+**[atticus-investigation](https://github.com/Exios66/atticus-investigation)**
+
+<sub>Built by the governed evaluation family under <a href="https://github.com/Exios66">@Exios66</a> · 2026</sub>
+
+</div>
