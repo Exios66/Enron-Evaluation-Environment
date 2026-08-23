@@ -24,6 +24,7 @@ in the corpus.
 │   ├── correspondence_subclasses.py    # Shared heuristic labeler (10-key taxonomy)
 │   ├── acquire_enron.py                # Download + verify + extract CMU tarball
 │   ├── build_corpus_index.py           # Parse maildir → data/enron/index.jsonl
+│   ├── dedupe.py                       # Exact-duplicate removal → data/enron/index.unique.jsonl
 │   ├── build_pipeline_dump.py          # Stratified sample → data/enron/pipeline.jsonl
 │   ├── spot_check.py                   # Labeled review sample → reports/eda/spot_check.csv
 │   └── eda/
@@ -31,20 +32,24 @@ in the corpus.
 │       └── explore_subclasses.py       # Subclass discovery & edge-case analysis
 ├── reports/
 │   ├── eda/                            # Committed EDA output
-│   │   ├── final_report.md             # ✅ Updated: correct numbers, 12 sections, new analysis
+│   │   ├── final_report.md             # ✅ Updated: correct numbers, 16 sections, new analysis
 │   │   ├── report.md                   # Original detailed EDA report
 │   │   ├── findings.md                 # Condensed key findings
 │   │   ├── subclasses_discovery.md     # Taxonomy exploration notes
 │   │   ├── spot_check.csv              # Human review artifacts
-│   │   └── figures/                    # 8 published PNG charts
-│   │       ├── 01_subclasses.png       # Subclass distribution bar chart
-│   │       ├── 02_attachments.png      # Attachment parts per message
-│   │       ├── 03_mime_types.png       # Attachment MIME types
-│   │       ├── 04_internal_external.png # Internal vs external senders
-│   │       ├── 05_top_senders.png      # Top 20 senders
-│   │       ├── 06_body_length.png      # Body length histogram w/ budget lines
-│   │       ├── 07_custodians.png       # Message volume per custodian
-│   │       └── 08_fanout.png           # Recipient fan-out
+│   │   └── figures/                    # 12 published PNG charts
+│   │       ├── 01_subclasses.png       # Subclass distribution (horizontal bars)
+│   │       ├── 02_hour_of_day.png      # Message volume by hour (UTC)
+│   │       ├── 03_day_of_week.png      # Message volume by weekday
+│   │       ├── 04_monthly_volume.png   # Monthly volume timeline
+│   │       ├── 05_internal_external.png # Internal vs external senders
+│   │       ├── 06_top_senders.png      # Top 20 senders
+│   │       ├── 07_body_length.png      # Body length histogram w/ budget lines
+│   │       ├── 08_custodians.png       # Message volume per custodian
+│   │       ├── 09_fanout.png           # Recipient fan-out
+│   │       ├── 10_thread_sizes.png     # Thread-size distribution (exact)
+│   │       ├── 11_duplicates.png       # Exact-duplicate bodies (md5)
+│   │       └── 12_recipient_roles.png  # To/Cc/Bcc address totals
 │   └── pipeline/                       # Pipeline integration docs
 │       └── README.md                   # Wiring into llm-entity-extraction
 ├── .gitignore                          # Data dirs, artifacts, env vars
@@ -72,16 +77,19 @@ python scripts/acquire_enron.py
 # 2. Build the full-corpus index (JSONL stream of parsed messages)
 python scripts/build_corpus_index.py
 
-# 3. Run the full EDA — generates reports + 8 figures
+# 3. Run the full EDA — generates reports + 12 figures
 python scripts/eda/explore_enron.py
 
-# 4. Build the pipeline-ready stratified sample
+# 4. Build the pipeline-ready stratified sample (skips exact-duplicate bodies)
 python scripts/build_pipeline_dump.py
 
-# 5. Draw a labeled spot-check sample for human review
+# 5. (Optional) Regenerate a fully deduplicated corpus index
+python scripts/dedupe.py --index data/enron/index.jsonl --out data/enron/index.unique.jsonl
+
+# 6. Draw a labeled spot-check sample for human review
 python scripts/spot_check.py
 
-# 6. Validate correctness with the test harness (no corpus data needed)
+# 7. Validate correctness with the test harness (no corpus data needed)
 pytest tests/ -v
 ```
 
@@ -167,6 +175,24 @@ adding previously-missing dimensions:
 | §12 | Pipeline fit assessment (all budgets updated to reflect new corpus stats) |
 
 See [`reports/eda/final_report.md`](reports/eda/final_report.md) for the complete updated report.
+
+## Deduplication (v2.1)
+
+The full-corpus EDA found **52.2% of non-empty bodies are byte-exact duplicates**
+(md5 over raw body text) — cross-custodian cc'ing, saved sent-folder copies, and
+mass-mail blasts. Sampling from the raw index would repeatedly draw the same
+underlying text under different filenames.
+
+- **`scripts/dedupe.py`** — standalone tool; streams the index and keeps the
+  first occurrence per distinct body hash (`data/enron/index.unique.jsonl`).
+- **`build_pipeline_dump.py`** — dedupes *by construction*: every candidate
+  row's body is hashed with the identical scheme and repeats are skipped, so no
+  stratified sample can ever contain two rows with identical text.
+- Empty-body rows are never treated as duplicates of each other (they carry
+  distinct headers/paths), mirroring the EDA's hashing rule.
+- One shared hash function feeds the EDA's §14 duplicate counts, the sampler,
+  and the dedupe tool, so all three report directly comparable numbers.
+  Unit-tested in `tests/test_labeler.py::TestDedupe` (40 tests total).
 
 ## Key Design Decisions
 

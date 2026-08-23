@@ -443,6 +443,98 @@ class TestPipelineDumpIntegrity:
 
 
 # ===========================================================================
+# Dedupe tests (scripts/dedupe.py + build_pipeline_dump sampling policy)
+# ===========================================================================
+
+
+class TestDedupe:
+    """Exact-duplicate removal: shared hashing + index streaming + sampler."""
+
+    def _index(self, bodies, tmpdir):
+        """Write a synthetic index JSONL; return its Path."""
+        import json
+        import pathlib
+
+        p = pathlib.Path(tmpdir) / "index.jsonl"
+        with p.open("w", encoding="utf-8") as fh:
+            for i, body in enumerate(bodies):
+                fh.write(json.dumps({
+                    "filename": f"cust/f{i}.eml",
+                    "custodian": f"c{i % 2}",
+                    "body": body,
+                    "subject": f"msg {i}",
+                }) + "\n")
+        return p
+
+    def test_body_hash_matches_eda_semantics(self):
+        import hashlib
+
+        from dedupe import body_hash
+
+        assert body_hash("") is None
+        assert body_hash(None) is None
+        # Byte-compatible with explore_enron.py §14: md5(utf-8, ignore).
+        assert body_hash("hello world") == hashlib.md5(b"hello world").hexdigest()
+        # Non-UTF-8-representable chars must not crash (errors="ignore").
+        assert body_hash("ok \udcff tail") == body_hash("ok  tail")
+
+    def test_dedupe_index_keeps_first_occurrence_only(self):
+        import json
+        import tempfile
+
+        from dedupe import dedupe_index
+
+        with tempfile.TemporaryDirectory() as td:
+            src = self._index(["alpha", "alpha", "", "beta", "alpha"], td)
+            out = pathlib.Path(td) / "unique.jsonl"
+            stats = dedupe_index(src, out)
+            assert stats["total_rows"] == 5
+            assert stats["written"] == 3
+            assert stats["dropped_duplicates"] == 2
+            assert stats["empty_body_rows"] == 1
+            assert stats["unique_texts"] == 2
+            assert stats["largest_group_copies"] == 3
+            kept = [json.loads(line)["body"] for line in out.open(encoding="utf-8")]
+            assert kept == ["alpha", "", "beta"]
+
+    def test_dedupe_index_empty_input(self):
+        import tempfile
+
+        from dedupe import dedupe_index
+
+        with tempfile.TemporaryDirectory() as td:
+            src = self._index([], td)
+            out = pathlib.Path(td) / "unique.jsonl"
+            stats = dedupe_index(src, out)
+            assert stats["total_rows"] == 0
+            assert stats["written"] == 0
+            assert stats["largest_group_copies"] == 0
+
+    def test_pipeline_sample_never_contains_duplicate_bodies(self):
+        import tempfile
+
+        from build_pipeline_dump import build_sample
+
+        bodies = ["AAA", "AAA", "BBB", "BBB", "BBB", "CCC"]
+        with tempfile.TemporaryDirectory() as td:
+            idx = self._index(bodies, td)
+            body_by_file = {f"cust/f{i}.eml": b for i, b in enumerate(bodies)}
+            rows, stats = build_sample(idx, 10, 42)
+            dd = stats["dedupe"]
+            assert dd["rows_read"] == 6
+            assert dd["duplicates_skipped"] == 3
+            # Only the 3 unique texts can ever be picked.
+            assert stats["n_picked"] <= 3
+            # Every picked row maps back to a distinct source body.
+            seen_bodies = set()
+            for r in rows:
+                b = body_by_file[r["filename"]]
+                assert b not in seen_bodies, "sample contains duplicate body text"
+                seen_bodies.add(b)
+            assert stats["coverage"]["complete"] is True
+
+
+# ===========================================================================
 # Run
 # ===========================================================================
 

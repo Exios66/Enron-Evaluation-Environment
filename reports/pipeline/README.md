@@ -10,7 +10,9 @@ regenerable via `scripts/build_pipeline_dump.py`).
 
 - **~300–500 emails** (default `--n 400`) sampled from the full 517,431-message
   CMU corpus, stratified by custodian, internal/external sender,
-  correspondence subclass, and attachment presence.
+  correspondence subclass, and attachment presence. Exact-duplicate bodies
+  (52.2% of the corpus!) are skipped during sampling — see
+  `scripts/dedupe.py` and the repo README's Deduplication section.
 - Row shape (the flat streamer-dump shape the docclass eval runners consume):
 
 ```json

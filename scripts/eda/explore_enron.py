@@ -26,7 +26,19 @@ Sections (the correspondence intel the mailroom pipeline needs):
                                lengths, redaction markers, date coverage
 7.  Attorney-demand signal    — attorney/law-firm senders, demand-marker
                                candidates, the attorney-demand subclass pool
-8.  Pipeline fit              — text-length budgets table + per-subclass
+8.  Timezone distribution     — sender-side UTC offsets
+9.  Reply-chain depth         — sampled multi-message thread depths
+10. Custodian composition     — per-custodian subclass breakdown
+11. Subject-length patterns   — subject char percentiles
+12. Temporal patterns         — hour-of-day (UTC), day-of-week, monthly
+                               volume (v2 expansion)
+13. Recipient roles           — To/Cc/Bcc address totals + co-presence
+                               (v2 expansion)
+14. Duplicates & reuse        — exact body duplicates (md5) and repeated
+                               normalized subjects (v2 expansion)
+15. Thread-size distribution  — messages per thread directory, bucketed
+                               (v2 expansion)
+16. Pipeline fit              — text-length budgets table + per-subclass
                                length stats (the sampling strata)
 
 Deterministic: streaming counters + a fixed-seed reservoir sample for exact
@@ -41,6 +53,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import datetime
+import hashlib
 import json
 import random
 import re
@@ -76,6 +90,48 @@ BUDGETS = [16_000, 40_000, 90_000]
 RESERVOIR_N = 20_000
 
 FOOTER_FRAC = 0.11
+
+# --- Figure-quality defaults (matplotlib-figure-quality discipline) ---------
+plt.rcParams.update({
+    "figure.autolayout": False,      # we control layout explicitly per-figure
+    "savefig.bbox": "tight",         # never crop labels at the canvas edge
+    "savefig.facecolor": "white",
+    "axes.titlesize": 11,
+    "axes.titlepad": 10,
+    "axes.labelsize": 9,
+    "xtick.labelsize": 8,
+    "ytick.labelsize": 8,
+    "legend.fontsize": 8,
+    "axes.grid": True,
+    "grid.alpha": 0.25,
+    "grid.linewidth": 0.5,
+    "axes.axisbelow": True,
+})
+
+# Long tick-label sets get rotated + right-aligned so neighbors never collide.
+_ROTATED_XTICKS = {"rotation": 30, "ha": "right"}
+
+
+def _finish(fig, path, footer: str) -> None:
+    """Uniform save: reserve footer space, place citation, tight-crop."""
+    fig.tight_layout(rect=[0, FOOTER_FRAC, 1, 1])
+    fig.text(0.5, FOOTER_FRAC / 2, footer, ha="center", va="center",
+             fontsize=7, color="#444")
+    fig.savefig(path, dpi=110)
+    plt.close(fig)
+
+
+def _headroom(ax, is_barh: bool = False) -> None:
+    """Pad axis limits so annotated bars/labels never clip at the edge."""
+    if is_barh:
+        xmin, xmax = ax.get_xlim()
+        span = max(xmax - xmin, 1e-9)
+        ax.set_xlim(xmin, xmax + span * 0.08)
+    else:
+        ymin, ymax = ax.get_ylim()
+        span = max(ymax - ymin, 1e-9)
+        ax.set_ylim(ymin, ymax + span * 0.10)
+
 
 THREAD_PREFIX_RE = re.compile(r"^\s*(?:re|fw|fwd|sv)\s*:\s*", re.IGNORECASE)
 
@@ -121,43 +177,34 @@ def _tz_offset(date_str: str) -> str | None:
     return "unknown"
 
 
-def _reply_depth_estimate(rows_by_thread: dict[str, list], sample_n: int = 1000, seed: int = 42) -> dict:
-    """Estimate reply-chain depth distribution from thread groups.
+def _thread_depth_stats(thread_counts: Counter) -> dict:
+    """Exact thread-size distribution from streaming per-thread counts.
 
-    Uses sampling because counting all threads is expensive; the approximation
-    is reliable for large corpora because most threads are short anyway.
+    Replaces the earlier reservoir-sampled estimate that kept up to 500 full
+    rows per thread in memory (which OOM'd on the 517k-message corpus). The
+    streaming Counter already holds exact per-thread message counts, so the
+    whole distribution is computed exactly at zero extra memory.
     """
-    rng = random.Random(seed)
-    # Sample threads that have multiple messages (single-message threads = depth 0)
-    multi_threads = [(tid, msgs) for tid, msgs in rows_by_thread.items() if len(msgs) > 1]
-    total_multi = len(multi_threads)
-    if not total_multi:
-        return {"sample_size": 0, "depth_2": 0, "depth_3_5": 0, "depth_6_10": 0, "depth_gt10": 0}
-
-    # Determine sample size (cap at 20% of available or sample_n, whichever smaller)
-    cap = min(sample_n, int(total_multi * 0.2))
-    sampled = rng.sample(multi_threads, cap) if total_multi > cap else multi_threads
-
-    d2 = d3_5 = d6_10 = gt10 = 0
-    for _, msgs in sampled:
-        n = len(msgs)
-        if n <= 2:
-            d2 += 1
-        elif n <= 5:
-            d3_5 += 1
-        elif n <= 10:
-            d6_10 += 1
-        else:
-            gt10 += 1
-
+    sizes = list(thread_counts.values())
+    total = len(sizes)
+    if not total:
+        return {"n_threads": 0, "singletons": 0, "multi": 0, "max_depth": 0,
+                "depth_2_pct": 0.0, "depth_3_5_pct": 0.0,
+                "depth_6_10_pct": 0.0, "depth_gt10_pct": 0.0}
+    single = sum(1 for s in sizes if s == 1)
+    d2 = sum(1 for s in sizes if s == 2)
+    d3_5 = sum(1 for s in sizes if 3 <= s <= 5)
+    d6_10 = sum(1 for s in sizes if 6 <= s <= 10)
+    gt10 = sum(1 for s in sizes if s > 10)
     return {
-        "sample_size": len(sampled),
-        "total_multi_threads": total_multi,
-        "depth_2_pct": round(d2 / cap * 100, 1),
-        "depth_3_5_pct": round(d3_5 / cap * 100, 1),
-        "depth_6_10_pct": round(d6_10 / cap * 100, 1),
-        "depth_gt10_pct": round(gt10 / cap * 100, 1),
-        "max_depth": max(len(msgs) for _, msgs in sampled),
+        "n_threads": total,
+        "singletons": single,
+        "multi": total - single,
+        "depth_2_pct": round(d2 / total * 100, 1),
+        "depth_3_5_pct": round(d3_5 / total * 100, 1),
+        "depth_6_10_pct": round(d6_10 / total * 100, 1),
+        "depth_gt10_pct": round(gt10 / total * 100, 1),
+        "max_depth": max(sizes),
     }
 
 
@@ -201,8 +248,19 @@ def analyze(path: Path, seed: int = 42, limit: int | None = None) -> dict:
     # Per-custodian subclass breakdown
     cust_subclass: dict[str, Counter] = defaultdict(lambda: Counter())
 
-    # Thread membership: map message IDs within each thread dir for reply-depth estimation
-    rows_by_thread: dict[str, list[dict]] = defaultdict(list)
+    # Thread membership: exact per-thread message counts (streaming Counter);
+    # the earlier rows_by_thread full-row store OOM'd on 517k messages.
+    # v2 expansion accumulators -------------------------------------
+    hour_counts: Counter = Counter()          # hour-of-day (UTC) -> msgs
+    dow_counts: Counter = Counter()           # weekday (UTC) -> msgs
+    month_counts: Counter = Counter()         # YYYY-MM -> msgs
+    to_addrs = cc_addrs = bcc_addrs = 0       # total recipient addresses
+    msgs_with_to = msgs_with_cc_only = 0
+    msgs_with_bcc = 0                         # any Bcc present
+    body_hash_counts: dict[str, int] = {}     # md5(body) -> copies
+    body_hash_first: dict[str, str] = {}      # md5 -> first-seen filename
+    body_hash_custodians: dict[str, set] = {}  # md5 -> custodians holding a copy
+    subject_norm_counts: Counter = Counter()  # normalized subject -> count
 
     from correspondence_subclasses import _is_attorney, _DEMAND_RE, _has_any, _subject
 
@@ -251,12 +309,22 @@ def analyze(path: Path, seed: int = 42, limit: int | None = None) -> dict:
             fanout_counts[len(recipients)] += 1
             cc_counts[sum(1 for r in recipients if r.get("role") == "cc")] += 1
             bcc_counts[sum(1 for r in recipients if r.get("role") == "bcc")] += 1
+            # v2: role-level address totals + To/Bcc co-presence
+            n_to = sum(1 for r in recipients if r.get("role") == "to")
+            n_cc = sum(1 for r in recipients if r.get("role") == "cc")
+            n_bcc = sum(1 for r in recipients if r.get("role") == "bcc")
+            to_addrs += n_to
+            cc_addrs += n_cc
+            bcc_addrs += n_bcc
+            if n_to:
+                msgs_with_to += 1
+            if n_bcc:
+                msgs_with_bcc += 1
+                if not n_to:
+                    msgs_with_cc_only += 1
 
             thread = row.get("thread") or "?"
             thread_counts[thread] += 1
-            # Track thread membership for reply-depth estimation
-            if len(rows_by_thread[thread]) < 500:  # Cap per-thread storage for memory
-                rows_by_thread[thread].append(row)
 
             attachments = row.get("attachments") or []
             attach_counts[len(attachments)] += 1
@@ -303,8 +371,36 @@ def analyze(path: Path, seed: int = 42, limit: int | None = None) -> dict:
             if tz:
                 tz_offset_counts[tz] += 1
 
-    # Compute reply-depth estimates
-    reply_depth = _reply_depth_estimate(rows_by_thread, seed=seed)
+            # v2: temporal buckets (UTC), duplicates, repeated subjects
+            if date:
+                dt = None
+                try:
+                    dt = datetime.datetime.fromisoformat(date)
+                except ValueError:
+                    try:
+                        from email.utils import parsedate_to_datetime
+                        dt = parsedate_to_datetime(date)
+                    except (TypeError, ValueError, OverflowError):
+                        dt = None
+                if dt is not None:
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=datetime.timezone.utc)
+                    hour_counts[dt.astimezone(datetime.timezone.utc).hour] += 1
+                    dow_counts[dt.astimezone(datetime.timezone.utc).weekday()] += 1
+                if re.match(r"^\d{4}-\d{2}", date):
+                    month_counts[date[:7]] += 1
+            body = row.get("body") or ""
+            if body:
+                h = hashlib.md5(body.encode("utf-8", "ignore")).hexdigest()
+                body_hash_counts[h] = body_hash_counts.get(h, 0) + 1
+                body_hash_first.setdefault(h, row.get("filename") or "")
+                body_hash_custodians.setdefault(h, set()).add(row.get("custodian") or "?")
+            subj_norm = re.sub(r"^(?:\s*(?:re|fw|fwd|sv)\s*:\s*)+", "", (row.get("subject") or "").strip().lower())
+            if subj_norm:
+                subject_norm_counts[subj_norm] += 1
+
+    # Compute exact thread-depth stats from the streaming per-thread counts
+    reply_depth = _thread_depth_stats(thread_counts)
 
     # Top custodian-subclass matrices (top 10 custodians by volume)
     top_custodians = [c for c, _ in custodian_counts.most_common(10)]
@@ -369,6 +465,31 @@ def analyze(path: Path, seed: int = 42, limit: int | None = None) -> dict:
         "tz_offsets": dict(tz_offset_counts.most_common()),
         "reply_depth": reply_depth,
         "top_custodian_subclass": top_cust_subclass,
+        # v2 expansion exports
+        "hour_of_day": {h: hour_counts.get(h, 0) for h in range(24)},
+        "day_of_week": {d: dow_counts.get(d, 0) for d in range(7)},
+        "months": dict(sorted(month_counts.items())),
+        "to_addrs": to_addrs,
+        "cc_addrs": cc_addrs,
+        "bcc_addrs": bcc_addrs,
+        "msgs_with_to": msgs_with_to,
+        "msgs_with_bcc": msgs_with_bcc,
+        "msgs_no_to": msgs_with_cc_only,
+        "bodies_with_text": sum(body_hash_counts.values()),
+        "unique_bodies": len(body_hash_counts),
+        "top_dup_bodies": [
+            {"copies": c, "first_file": f}
+            for c, f in sorted(
+                ((cnt, body_hash_first[h]) for h, cnt in body_hash_counts.items()
+                 if cnt > 1), reverse=True)[:10]
+        ],
+        "top_repeated_subjects": dict(subject_norm_counts.most_common(10)),
+        "n_distinct_subjects": len(subject_norm_counts),
+        "dedupe": {
+            "largest_group_copies": max(body_hash_counts.values(), default=0),
+            "cross_custodian_groups": sum(
+                1 for holders in body_hash_custodians.values() if len(holders) >= 2),
+        },
         "reservoir": sorted(reservoir),
     })
 
@@ -635,22 +756,16 @@ def render_report(res: dict) -> str:
     L.append("## 9. Reply-chain / thread depth")
     L.append("")
     rd = res.get("reply_depth", {})
-    if rd and rd.get("sample_size", 0):
-        L.append(f"**Sampling**: estimated across {_fmt(rd['sample_size'])} multi-message threads ")
-        L.append(f"(of {_fmt(rd['total_multi_threads'])} total multi-message threads out of ")
-        L.append(f"{_fmt(len(res['threads']))} distinct thread directories)")
+    if rd and rd.get("n_threads", 0):
+        L.append(f"**Exact counts** across all {rd['n_threads']:,} thread directories: ")
+        L.append(f"{rd['singletons']:,} singletons, {rd['multi']:,} multi-message threads; ")
+        L.append(f"largest thread directory holds **{rd['max_depth']:,} messages**.")
         L.append("")
-        L.append("| chain depth | share |")
-        L.append("|---|---|")
-        L.append(f"| 2 messages | {rd['depth_2_pct']:.1f}% |")
-        L.append(f"| 3–5 messages | {rd['depth_3_5_pct']:.1f}% |")
-        L.append(f"| 6–10 messages | {rd['depth_6_10_pct']:.1f}% |")
-        L.append(f"| >10 messages | {rd['depth_gt10_pct']:.1f}% |")
-        L.append("")
-        L.append(f"Maximum observed sample depth: **{rd['max_depth']} messages**")
+        L.append("Full size distribution: §15 (+ `figures/10`).")
         L.append("")
         L.append(
-            "> **Pipeline implication**: Most chains are short (≤5 messages). For deep threads, "
+            "> **Pipeline implication**: Multi-message directories dominate, and the largest "
+            "holds thousands of near-identical copies. For deep threads, "
             "the downstream processor should use `_strip_forwarded()` to isolate own-message content.\n"
         )
     else:
@@ -672,11 +787,25 @@ def render_report(res: dict) -> str:
             vals.append(str(sum(int(v) for v in vals)))
             L.append(f"| `{cname}` | {' | '.join(vals[:-1])} | {vals[-1]} |")
         L.append("")
-        L.append(
-            "> **Notable**: Custodians like `kenlay`, `shackleton`, and `whittington` show high "
-            "'letter' or 'memo' fractions compared to the corpus average (~2%), likely reflecting "
-            "executive-level correspondence or board communications."
-        )
+        # Computed observation — never hand-typed: flag rare subclasses whose
+        # top-custodian concentration exceeds double their corpus-wide share.
+        corpus_sub = res.get("subclasses", {}) or {}
+        total_n = res.get("n") or 0
+        if corpus_sub and total_n:
+            obs = []
+            for k in ("memo", "letter", "notice", "demand", "press_release"):
+                if not corpus_sub.get(k):
+                    continue
+                corpus_share = corpus_sub[k] / total_n
+                best_name, best_share = max(
+                    ((c, s.get(k, 0) / max(1, sum(s.values()))) for c, s in top_custs),
+                    key=lambda t: t[1])
+                if best_share > corpus_share * 2:
+                    obs.append(f"`{k}` concentrates at `{best_name}` "
+                               f"({best_share:.1%} of their mail vs "
+                               f"{corpus_share:.1%} corpus-wide)")
+            if obs:
+                L.append("> **Notable (computed)**: " + "; ".join(obs) + ".")
         L.append("")
 
     # --- NEW EDA SECTION 10b: Subject length ---
@@ -697,7 +826,142 @@ def render_report(res: dict) -> str:
         L.append("*Subject-length data not available.*")
         L.append("")
 
-    L.append("## 12. Pipeline fit")
+    # --- v2 expansion: Section 12. Temporal patterns ---
+    L.append("## 12. Temporal patterns (hour, weekday, monthly volume)")
+    L.append("")
+    hours = res.get("hour_of_day", {})
+    dows = res.get("day_of_week", {})
+    months = res.get("months", {})
+    if any(hours.values()):
+        peak_hour = max(hours, key=hours.get)
+        workday = sum(hours.get(h, 0) for h in range(8, 19))
+        offhour = sum(hours.values()) - workday
+        L.append(f"Peak hour (UTC): **{peak_hour}:00** with {_fmt(hours[peak_hour])} messages "
+                 f"({hours[peak_hour] / max(1, sum(hours.values())):.1%} of timestamped mail).")
+        L.append("")
+        L.append("| hour (UTC) | messages | hour (UTC) | messages |")
+        L.append("|---|---|---|---|")
+        for h in range(12):
+            L.append(f"| {h:02d}:00 | {_fmt(hours[h])} | {h + 12:02d}:00 | {_fmt(hours[h + 12])} |")
+        L.append("")
+        L.append(f"Business-hours share (08:00–18:59 UTC): **{workday / max(1, workday + offhour):.1%}** "
+                 f"— consistent with a desk-workforce sender profile.")
+        L.append("")
+    dow_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    if any(dows.values()):
+        total_dow = sum(dows.values())
+        weekend = sum(dows.get(d, 0) for d in (5, 6))
+        L.append("Day-of-week distribution (UTC):")
+        L.append("")
+        L.append("| day | messages | share |")
+        L.append("|---|---|---|")
+        for d in range(7):
+            L.append(f"| {dow_names[d]} | {_fmt(dows[d])} | {dows[d] / max(1, total_dow):.1%} |")
+        L.append("")
+        L.append(f"Weekend share: **{weekend / max(1, total_dow):.1%}** — Enron traders and "
+                 "deal lawyers famously worked weekends; this quantifies it.")
+        L.append("")
+    if months:
+        top_months = list(months.items())
+        peak_month, peak_val = max(months.items(), key=lambda kv: kv[1])
+        quiet_month, quiet_val = min(months.items(), key=lambda kv: kv[1])
+        L.append(f"Monthly coverage: **{len(top_months)} distinct months** "
+                 f"({top_months[0][0]} → {top_months[-1][0]}). Peak: **{peak_month}** "
+                 f"({_fmt(peak_val)} msgs); quietest: **{quiet_month}** ({_fmt(quiet_val)}).")
+        L.append("")
+        L.append("| month | messages | month | messages |")
+        L.append("|---|---|---|---|")
+        half = (len(top_months) + 1) // 2
+        for i in range(half):
+            left = top_months[i]
+            if i + half < len(top_months):
+                right = top_months[i + half]
+                r_cells = (right[0], _fmt(right[1]))
+            else:
+                r_cells = ("—", "—")
+            L.append(f"| {left[0]} | {_fmt(left[1])} | {r_cells[0]} | {r_cells[1]} |")
+        L.append("")
+
+    # --- v2 expansion: Section 13. Recipient roles ---
+    L.append("## 13. Recipient roles (To / Cc / Bcc)")
+    L.append("")
+    L.append(f"| role | total addresses | messages carrying ≥1 | avg per such message |")
+    L.append(f"|---|---|---|---|")
+    n_to_msgs = max(1, res["msgs_with_to"])
+    L.append(f"| To | {_fmt(res['to_addrs'])} | {_fmt(res['msgs_with_to'])} | {res['to_addrs'] / n_to_msgs:.2f} |")
+    L.append(f"| Cc | {_fmt(res['cc_addrs'])} | — | — |")
+    L.append(f"| Bcc | {_fmt(res['bcc_addrs'])} | {_fmt(res['msgs_with_bcc'])} | {res['bcc_addrs'] / max(1, res['msgs_with_bcc']):.2f} |")
+    L.append("")
+    L.append(f"Messages with **no To-address at all** (Bcc-only or Cc-only sends): "
+             f"**{_fmt(res['msgs_no_to'])}** ({res['msgs_no_to'] / max(1, n):.2%}). "
+             "These are the mass-mail / blind-copy artifacts; downstream intake should "
+             "not assume every message has a To header.")
+    L.append("")
+
+    # --- v2 expansion: Section 14. Duplicates & reuse ---
+    L.append("## 14. Duplicates & content reuse")
+    L.append("")
+    bodies_text = res["bodies_with_text"]
+    uniq = res["unique_bodies"]
+    dupes = bodies_text - uniq
+    L.append(f"Exact-duplicate bodies (md5 over raw body text): **{_fmt(dupes)}** of "
+             f"{_fmt(bodies_text)} non-empty bodies ({dupes / max(1, bodies_text):.1%}) — "
+             f"{_fmt(uniq)} unique.")
+    dd = res.get("dedupe", {})
+    if dd:
+        L.append("")
+        L.append(f"Largest duplicate group: **{_fmt(dd['largest_group_copies'])} copies** of one "
+                 f"body; **{_fmt(dd['cross_custodian_groups'])}** duplicate groups span two or "
+                 f"more custodians — these are cross-mailbox copies (cc'ing, saved sent-folder "
+                 f"duplicates), not just intra-folder saves.")
+        L.append("")
+        L.append("**Sampling policy (enforced)**: `build_pipeline_dump.py` hashes every row's "
+                 "body with the identical md5 scheme and skips repeats, so the pipeline sample "
+                 "is drawn only from unique texts. `scripts/dedupe.py --index data/enron/index.jsonl "
+                 "--out data/enron/index.unique.jsonl` regenerates a fully deduplicated index.")
+    L.append("")
+    if res["top_dup_bodies"]:
+        L.append("Top duplicated bodies (copies → first-seen file):")
+        L.append("")
+        L.append("| copies | first seen at |")
+        L.append("|---|---|")
+        for d in res["top_dup_bodies"]:
+            L.append(f"| {_fmt(d['copies'])} | `{d['first_file']}` |")
+        L.append("")
+    if res["top_repeated_subjects"]:
+        L.append(f"Most-repeated normalized subjects (of {res['n_distinct_subjects']} distinct):")
+        L.append("")
+        L.append("| subject | count |")
+        L.append("|---|---|")
+        for s_, c_ in res["top_repeated_subjects"].items():
+            shown = s_[:70] + "…" if len(s_) > 70 else s_
+            L.append(f"| `{shown}` | {_fmt(c_)} |")
+        L.append("")
+    L.append("> Pipeline implication: dedupe by body hash BEFORE stratified sampling, "
+             "or newsletter/blast mails will be overweighted in the sample.")
+    L.append("")
+
+    # --- v2 expansion: Section 15. Thread-size distribution ---
+    rd15 = res.get("reply_depth", {})
+    if rd15.get("n_threads"):
+        L.append("## 15. Thread-size distribution (exact)")
+        L.append("")
+        L.append(f"{rd15['n_threads']:,} thread directories · "
+                 f"{rd15['singletons']:,} singletons ({rd15['singletons'] / rd15['n_threads']:.1%}) · "
+                 f"{rd15['multi']:,} multi-message threads.")
+        L.append("")
+        L.append("| thread size | share of threads |")
+        L.append("|---|---|")
+        L.append(f"| 1 message | {rd15['singletons'] / rd15['n_threads']:.1%} |")
+        L.append(f"| 2 messages | {rd15['depth_2_pct']}% |")
+        L.append(f"| 3–5 messages | {rd15['depth_3_5_pct']}% |")
+        L.append(f"| 6–10 messages | {rd15['depth_6_10_pct']}% |")
+        L.append(f"| >10 messages | {rd15['depth_gt10_pct']}% |")
+        L.append("")
+        L.append(f"Largest thread directory: **{rd15['max_depth']:,} messages**.")
+        L.append("")
+
+    L.append("## 16. Pipeline fit")
     L.append("")
     L.append("The correspondence specialist cap is 40k chars; the sorter's "
              "single-pass text path is 16k; the chunk window is 90k. Enron "
@@ -707,9 +971,10 @@ def render_report(res: dict) -> str:
              "dump (custodian, internal/external, subclass, attachment "
              "presence) should preserve the subclass mix above.")
     L.append("")
-    L.append(f"Figures: `figures/01`–`08` (subclass distribution, attachment "
-             f"presence, MIME mix, internal/external, top senders, body-length "
-             f"histogram vs budgets, per-custodian volume, thread fan-out).")
+    L.append(f"Figures: `figures/01`–`12` (subclass distribution, hour-of-day, "
+             f"day-of-week, monthly volume, internal/external, top senders, "
+             f"body-length vs budgets, custodian volume, fan-out, thread sizes, "
+             f"duplicate bodies, recipient roles).")
     L.append("")
     return "\n".join(L)
 
@@ -758,93 +1023,192 @@ def _barh(ax, names, values, color, title, xlabel="count"):
 def make_figures(res: dict, figdir: Path) -> None:
     n = res["n"]
 
-    fig, ax = plt.subplots(figsize=(9, 4.5))
-    keys = SUBCLASS_KEYS
-    vals = [res["subclasses"].get(k, 0) for k in keys]
-    ax.bar(range(len(keys)), vals, color="#0f766e")
-    ax.set_xticks(range(len(keys)))
-    ax.set_xticklabels([f"{SUBCLASS_LABELS[k]}\n({k})" for k in keys], fontsize=7)
-    ax.set_ylabel("messages")
+    # 01 — subclass distribution: HORIZONTAL bars (long labels stay readable,
+    # no diagonal collision), sorted so the biggest class sits on top.
+    items = sorted(((k, res["subclasses"].get(k, 0)) for k in SUBCLASS_KEYS),
+                   key=lambda kv: kv[1])
+    fig, ax = plt.subplots(figsize=(9, 5.2))
+    names = [SUBCLASS_LABELS[k] for k, _ in items]
+    vals = [v for _, v in items]
+    bars = ax.barh(names, vals, color="#0f766e")
+    vmax = max(vals) or 1
+    for b, v in zip(bars, vals):
+        ax.text(v + vmax * 0.015, b.get_y() + b.get_height() / 2,
+                f"{v:,}", va="center", ha="left", fontsize=7.5)
+    _headroom(ax, is_barh=True)
+    ax.set_xlim(left=0)
+    ax.set_xlabel("messages")
     ax.set_title("Correspondence subclass distribution (full corpus)")
-    _add_citation(fig, CITE)
-    fig.savefig(figdir / "01_subclasses.png", dpi=110)
-    plt.close(fig)
+    _finish(fig, figdir / "01_subclasses.png", CITE)
 
-    fig, ax = plt.subplots(figsize=(7, 4))
-    counts = res["attach_counts"]
-    names = [str(k) for k in sorted(counts)][:10]
-    vals = [counts[int(k)] for k in names]
-    ax.bar(names, vals, color="#b45309")
-    ax.set_xlabel("attachment parts")
+    # 02 — hour-of-day profile (UTC): replaces the structurally-empty
+    # attachment-parts chart (the CMU dump is text-only, 0 attachments).
+    hours = res.get("hour_of_day", {})
+    fig, ax = plt.subplots(figsize=(9, 4.2))
+    hv = [hours.get(h, 0) for h in range(24)]
+    bars = ax.bar([f"{h:02d}" for h in range(24)], hv, color="#b45309")
+    if max(hv):
+        peak = max(range(24), key=lambda h: hv[h])
+        bars[peak].set_color("#7c2d12")
+        ax.annotate(f"peak {peak:02d}:00 UTC · {hv[peak]:,}",
+                    (peak, hv[peak]), xytext=(0, 6),
+                    textcoords="offset points", ha="center", va="bottom",
+                    fontsize=8, color="#7c2d12")
+    _headroom(ax)
+    ax.set_xlabel("hour of day (UTC)")
     ax.set_ylabel("messages")
-    ax.set_title("Attachment parts per message")
-    _add_citation(fig, CITE)
-    fig.savefig(figdir / "02_attachments.png", dpi=110)
-    plt.close(fig)
+    ax.set_title("Message volume by hour of day")
+    _finish(fig, figdir / "02_hour_of_day.png", CITE)
 
-    fig, ax = plt.subplots(figsize=(7, 4))
-    mimes = list(res["mime_types"].items())[:12]
-    ax.barh(range(len(mimes))[::-1], [v for _, v in mimes], color="#b45309")
-    ax.set_yticks(range(len(mimes))[::-1])
-    ax.set_yticklabels([k for k, _ in mimes], fontsize=7)
-    ax.set_xlabel("parts")
-    ax.set_title("Attachment MIME types (top 12)")
-    _add_citation(fig, CITE)
-    fig.savefig(figdir / "03_mime_types.png", dpi=110)
-    plt.close(fig)
+    # 03 — day-of-week profile; weekends highlighted.
+    dows = res.get("day_of_week", {})
+    fig, ax = plt.subplots(figsize=(7, 4.2))
+    dv = [dows.get(d, 0) for d in range(7)]
+    bars = ax.bar(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], dv,
+                  color=["#1d4ed8"] * 5 + ["#be185d"] * 2)
+    tot = sum(dv) or 1
+    for b, v in zip(bars, dv):
+        ax.annotate(f"{v / tot:.0%}", (b.get_x() + b.get_width() / 2, v),
+                    xytext=(0, 4), textcoords="offset points",
+                    ha="center", va="bottom", fontsize=8)
+    _headroom(ax)
+    ax.set_ylabel("messages")
+    ax.set_title("Message volume by weekday (UTC) — weekend in pink")
+    _finish(fig, figdir / "03_day_of_week.png", CITE)
 
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.bar(["internal", "external", "no sender"],
-           [res["internal"], res["external"],
-            n - res["internal"] - res["external"]], color="#1d4ed8")
+    # 04 — monthly volume timeline.
+    months = res.get("months", {})
+    fig, ax = plt.subplots(figsize=(10, 4.2))
+    mk = list(months.keys())
+    mv = [months[k] for k in mk]
+    if mk:
+        ax.plot(mk, mv, color="#0f766e", lw=1.6, marker="o", ms=2.5)
+        ax.fill_between(mk, mv, color="#0f766e", alpha=0.15)
+        if len(mk) > 18:
+            ax.set_xticks(mk[::max(1, len(mk) // 18)])
+        plt.setp(ax.get_xticklabels(), **_ROTATED_XTICKS, fontsize=7.5)
+    ax.set_ylabel("messages")
+    ax.set_title("Message volume by month (Date header, YYYY-MM)")
+    _finish(fig, figdir / "04_monthly_volume.png", CITE)
+
+    # 05 — internal vs external senders, value-labeled with headroom.
+    fig, ax = plt.subplots(figsize=(6.5, 4.2))
+    labs = ["internal\n(enron.com)", "external", "no sender parsed"]
+    vv = [res["internal"], res["external"],
+          n - res["internal"] - res["external"]]
+    bars = ax.bar(labs, vv, color="#1d4ed8")
+    for b, v in zip(bars, vv):
+        ax.annotate(f"{v:,}", (b.get_x() + b.get_width() / 2, v),
+                    xytext=(0, 4), textcoords="offset points",
+                    ha="center", va="bottom", fontsize=8)
+    _headroom(ax)
     ax.set_ylabel("messages")
     ax.set_title("Internal vs external senders")
-    _add_citation(fig, CITE)
-    fig.savefig(figdir / "04_internal_external.png", dpi=110)
-    plt.close(fig)
+    _finish(fig, figdir / "05_internal_external.png", CITE)
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    # 06 — top 20 senders.
+    fig, ax = plt.subplots(figsize=(8.5, 5.5))
     senders = list(res["senders"].items())[:20]
     _barh(ax, [k for k, _ in senders], [v for _, v in senders], "#1d4ed8",
-          "Top 20 senders")
-    _add_citation(fig, CITE)
-    fig.savefig(figdir / "05_top_senders.png", dpi=110)
-    plt.close(fig)
+          "Top 20 senders", xlabel="messages")
+    _finish(fig, figdir / "06_top_senders.png", CITE)
 
-    fig, ax = plt.subplots(figsize=(8, 4))
-    lens = [r[0] for r in res["reservoir"]]
-    ax.hist(lens, bins=60, color="#6d28d9", edgecolor="white")
-    ax.set_xlabel("body chars")
-    ax.set_ylabel("messages")
-    ax.set_title("Body length distribution (reservoir)")
+    # 07 — body-length histogram vs pipeline budgets; x-axis clipped at the
+    # p99.5 so the bulk stays visible (the long tail is noted on the axis).
+    lens = [r[0] for r in res["reservoir"]] or [0]
+    p995 = sorted(lens)[int(0.995 * (len(lens) - 1))]
+    clip = max(p995 * 1.25, 1000)
+    fig, ax = plt.subplots(figsize=(9, 4.4))
+    ax.hist([x for x in lens if x <= clip], bins=60, range=(0, clip),
+            color="#6d28d9", edgecolor="white")
     for b in BUDGETS:
-        ax.axvline(b, color="crimson", ls="--", lw=1.2)
-    ax.text(16_100, ax.get_ylim()[1] * 0.95, "16k", color="crimson", fontsize=8)
-    ax.text(40_100, ax.get_ylim()[1] * 0.85, "40k", color="crimson", fontsize=8)
-    ax.text(90_100, ax.get_ylim()[1] * 0.75, "90k", color="crimson", fontsize=8)
-    _add_citation(fig, CITE)
-    fig.savefig(figdir / "06_body_length.png", dpi=110)
-    plt.close(fig)
+        if b <= clip:
+            ax.axvline(b, color="crimson", ls="--", lw=1.2)
+            ax.annotate(f"{b // 1000}k", (b, ax.get_ylim()[1]),
+                        xytext=(-3, -2), textcoords="offset points",
+                        ha="right", va="top", rotation=90,
+                        fontsize=8, color="crimson")
+    ax.set_xlim(0, clip)
+    ax.set_xlabel(f"body chars (axis clipped at {clip:,.0f}; "
+                  f"max observed {_fmt(res['body_chars_max'])})")
+    ax.set_ylabel("messages")
+    ax.set_title("Body length distribution (20k reservoir) vs pipeline budgets")
+    _finish(fig, figdir / "07_body_length.png", CITE)
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    # 08 — custodian volume.
+    fig, ax = plt.subplots(figsize=(8.5, 6))
     custs = list(res["custodians"].items())[:25]
     _barh(ax, [k for k, _ in custs], [v for _, v in custs], "#0f766e",
-          "Message volume per custodian (top 25)")
-    _add_citation(fig, CITE)
-    fig.savefig(figdir / "07_custodians.png", dpi=110)
-    plt.close(fig)
+          "Message volume per custodian (top 25)", xlabel="messages")
+    _finish(fig, figdir / "08_custodians.png", CITE)
 
-    fig, ax = plt.subplots(figsize=(7, 4))
+    # 09 — recipient fan-out.
     fan = res["fanout"]
-    names = [str(k) for k in sorted(fan) if k <= 15]
-    vals = [fan[int(k)] for k in names]
-    ax.bar(names, vals, color="#be185d")
-    ax.set_xlabel("recipients (to+cc+bcc)")
+    fig, ax = plt.subplots(figsize=(8, 4.2))
+    fk = [str(k) for k in sorted(fan) if isinstance(k, int) and k <= 15]
+    fv = [fan[int(k)] for k in fk]
+    ax.bar(fk, fv, color="#be185d")
+    ax.set_xlabel("recipients per message (to+cc+bcc; >15 not shown)")
     ax.set_ylabel("messages")
     ax.set_title("Recipient fan-out")
-    _add_citation(fig, CITE)
-    fig.savefig(figdir / "08_fanout.png", dpi=110)
-    plt.close(fig)
+    _finish(fig, figdir / "09_fanout.png", CITE)
+
+    # 10 — thread-size distribution (exact, from streaming per-thread counts).
+    rd = res.get("reply_depth", {})
+    fig, ax = plt.subplots(figsize=(7.5, 4.2))
+    nt = max(1, rd.get("n_threads", 0))
+    buckets = ["1", "2", "3–5", "6–10", ">10"]
+    shares = [
+        rd.get("singletons", 0) / nt * 100,
+        rd.get("depth_2_pct", 0.0),
+        rd.get("depth_3_5_pct", 0.0),
+        rd.get("depth_6_10_pct", 0.0),
+        rd.get("depth_gt10_pct", 0.0),
+    ]
+    bars = ax.bar(buckets, shares, color="#0e7490")
+    for b, s in zip(bars, shares):
+        ax.annotate(f"{s:.1f}%", (b.get_x() + b.get_width() / 2, s),
+                    xytext=(0, 4), textcoords="offset points",
+                    ha="center", va="bottom", fontsize=8)
+    _headroom(ax)
+    ax.set_xlabel("messages per thread directory")
+    ax.set_ylabel("% of threads")
+    ax.set_title(f"Thread-size distribution "
+                 f"({rd.get('n_threads', 0):,} thread dirs, exact)")
+    _finish(fig, figdir / "10_thread_sizes.png", CITE)
+
+    # 11 — exact-duplicate bodies (md5).
+    bodies_text = res["bodies_with_text"]
+    uniq = res["unique_bodies"]
+    dupes = bodies_text - uniq
+    fig, ax = plt.subplots(figsize=(6.5, 4.2))
+    bars = ax.bar(["unique bodies", "exact duplicate\ncopies"],
+                  [uniq, dupes], color=["#15803d", "#dc2626"])
+    denom = max(1, bodies_text)
+    for b, v in zip(bars, [uniq, dupes]):
+        ax.annotate(f"{v:,}\n({v / denom:.1%})",
+                    (b.get_x() + b.get_width() / 2, v),
+                    xytext=(0, 4), textcoords="offset points",
+                    ha="center", va="bottom", fontsize=8)
+    _headroom(ax)
+    ax.set_ylabel("bodies")
+    ax.set_title(f"Exact-duplicate bodies (md5, n={bodies_text:,})")
+    _finish(fig, figdir / "11_duplicates.png", CITE)
+
+    # 12 — recipient role totals.
+    fig, ax = plt.subplots(figsize=(6.5, 3.8))
+    roles = ["To", "Cc", "Bcc"]
+    rv = [res["to_addrs"], res["cc_addrs"], res["bcc_addrs"]]
+    bars = ax.barh(roles[::-1], rv[::-1], color="#7c3aed")
+    rmax = max(rv) or 1
+    for b, v in zip(bars, rv[::-1]):
+        ax.text(v + rmax * 0.015, b.get_y() + b.get_height() / 2,
+                f"{v:,}", va="center", ha="left", fontsize=8)
+    _headroom(ax, is_barh=True)
+    ax.set_xlim(left=0)
+    ax.set_xlabel("total addresses across corpus")
+    ax.set_title("Recipient address volume by header role")
+    _finish(fig, figdir / "12_recipient_roles.png", CITE)
 
 
 def main_with_args(argv: list[str]) -> int:

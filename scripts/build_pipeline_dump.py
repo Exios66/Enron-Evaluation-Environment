@@ -11,6 +11,10 @@ with ``expected: "correspondence"`` for every row and ``expected_subclass``
 from the comprehensive enum in ``scripts/correspondence_subclasses.py``.
 
 Sampling (deterministic, seed 42):
+- Deduplicated by construction: every row's non-empty body text is hashed
+  (md5, identical scheme to ``scripts/dedupe.py`` / the EDA §14 counts) and a
+  hash seen before is skipped, so the sample can never contain two rows with
+  identical text even though >50% of corpus bodies are byte-exact copies.
 - Every NON-email subclass present in the corpus is included wholesale up to
   a per-subclass cap (they are the rare, high-value types: memo, letter,
   notice, demand, attorney_demand, press_release, meeting_request,
@@ -48,6 +52,7 @@ from correspondence_subclasses import (  # noqa: E402
     SUBCLASS_KEYS,
     label_correspondence,
 )
+from dedupe import body_hash  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / "data" / "enron" / "index.jsonl"
@@ -135,7 +140,12 @@ def _fingerprint(rows: list[dict]) -> str:
 
 
 def build_sample(index: Path, n: int, seed: int) -> tuple[list[dict], dict]:
-    """Stream the index, label every row, and return the stratified sample."""
+    """Stream the index, label every row, and return the stratified sample.
+
+    Exact-duplicate bodies (same md5 as ``dedupe.body_hash``) are skipped on
+    first sight, so no two sampled rows ever carry identical text. The
+    returned stats dict carries the drop counts under ``"dedupe"``.
+    """
     import random
 
     rng = random.Random(seed)
@@ -144,10 +154,21 @@ def build_sample(index: Path, n: int, seed: int) -> tuple[list[dict], dict]:
     email_buckets: dict[str, list[dict]] = defaultdict(list)
     present: set[str] = set()
     counts: Counter = Counter()
+    seen_body_hashes: set[str] = set()
+    dup_skipped = 0
+    empty_body_rows = 0
 
     with index.open(encoding="utf-8") as fh:
         for line in fh:
             row = json.loads(line)
+            h = body_hash(row.get("body") or "")
+            if h is None:
+                empty_body_rows += 1
+            elif h in seen_body_hashes:
+                dup_skipped += 1
+                continue
+            else:
+                seen_body_hashes.add(h)
             subclass, evidence = label_correspondence(row)
             counts[subclass] += 1
             present.add(subclass)
@@ -233,6 +254,12 @@ def build_sample(index: Path, n: int, seed: int) -> tuple[list[dict], dict]:
         "sample_counts": dict(pick_stats),
         "coverage": coverage,
         "fingerprint": _fingerprint(rows),
+        "dedupe": {
+            "rows_read": sum(counts.values()) + dup_skipped,
+            "duplicates_skipped": dup_skipped,
+            "empty_body_rows_passed": empty_body_rows,
+            "unique_texts_available": len(seen_body_hashes) + empty_body_rows,
+        },
     }
 
 
@@ -258,6 +285,10 @@ def main_with_args(argv: list[str]) -> int:
     print(f"\nCorpus subclass counts: {stats['corpus_counts']}")
     print(f"Sample composition: {stats['sample_counts']} (total {stats['n_picked']})")
     cov = stats["coverage"]
+    dd = stats["dedupe"]
+    print(f"\nDedupe: skipped {dd['duplicates_skipped']:,} exact-duplicate "
+          f"bodies while sampling ({dd['empty_body_rows_passed']:,} empty-body rows "
+          f"passed through; {dd['unique_texts_available']:,} unique texts available)")
     print(f"\nSubclass coverage — corpus {len(cov['present_in_corpus'])} keys: "
           f"{cov['present_in_corpus']}")
     print(f"  sample {len(cov['present_in_sample'])} keys: {cov['present_in_sample']}")
