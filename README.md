@@ -20,7 +20,7 @@ in the corpus.
 [![Corpus](https://img.shields.io/badge/corpus-517%2C390_emails-2563eb)](reports/eda/report.md)
 [![Custodians](https://img.shields.io/badge/custodians-~150-059669)](reports/eda/report.md)
 [![Taxonomy](https://img.shields.io/badge/subclasses-10_keys-8b5cf6)](reports/pipeline/README.md)
-[![🤗 Dataset](https://img.shields.io/badge/%F0%9F%A4%97_Dataset-enron--correspondence-fbe425?logo=huggingface&logoColor=black)](https://huggingface.co/datasets/Lucius-Morningstar/enron-correspondence)
+[![🤗 Dataset](https://img.shields.io/badge/%F0%9F%A4%97_Dataset-enron--correspondence--dedup-fbe425?logo=huggingface&logoColor=black)](https://huggingface.co/datasets/Lucius-Morningstar/enron-correspondence-dedup)
 [![Sibling Node](https://img.shields.io/badge/sibling-claims--data--eda-0ea5e9)](https://github.com/Exios66/claims-data-eda)
 
 <img src="reports/eda/figures/01_subclasses.png" alt="Correspondence subclass distribution across the 517,390-message Enron corpus" width="720"/>
@@ -246,7 +246,7 @@ pip install pytest-cov && pytest tests/ --cov=scripts/correspondence_subclasses
 ## 🤗 Hugging Face Publication
 
 The full cleaned corpus publishes to the Hub as
-[**`Lucius-Morningstar/enron-correspondence`**](https://huggingface.co/datasets/Lucius-Morningstar/enron-correspondence)
+[**`Lucius-Morningstar/enron-correspondence-dedup`**](https://huggingface.co/datasets/Lucius-Morningstar/enron-correspondence-dedup)
 — one row per message with heuristic subclass GT (`expected_subclass` +
 on-row `label_evidence`) and the family-wide deterministic split
 (`md5(filename) % 10 == 0` → test, ~10%):

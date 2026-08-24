@@ -8,7 +8,7 @@ message, 517,390 rows, deterministic order), labels every row with the SHARED
 labeler (``correspondence_subclasses.label_correspondence``), applies the
 family-wide deterministic split rule, and publishes:
 
-    {HF_USERNAME}/enron-correspondence      (default: Lucius-Morningstar/enron-correspondence)
+    {HF_USERNAME}/enron-correspondence-dedup (default: Lucius-Morningstar/enron-correspondence-dedup)
 
 Every row carries:
 - ``filename``           maildir path relative to the root (deterministic id)
@@ -55,7 +55,7 @@ DEFAULT_INDEX = REPO_ROOT / "data" / "enron" / "index.jsonl"
 OUT_DIR = REPO_ROOT / "data" / "hf_export"
 STAGED_NAME = "enron_correspondence.jsonl"
 HF_USERNAME = os.environ.get("HF_USERNAME", "Lucius-Morningstar")
-REPO_ID = f"{HF_USERNAME}/enron-correspondence"
+REPO_ID = f"{HF_USERNAME}/enron-correspondence-dedup"
 LABELER_TESTS = "40"
 
 
@@ -241,7 +241,7 @@ def main_with_args(argv: list[str]) -> int:
     local_sha = hashlib.sha256(args.out.read_bytes()).hexdigest()
 
     manifest = {
-        "name": "enron-correspondence",
+        "name": "enron-correspondence-dedup",
         "schema_version": 1,
         "rows": len(rows),
         "index_rows_read": total,
