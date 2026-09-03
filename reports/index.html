@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Interactive EDA dashboard for CMU Enron email corpus — 517K messages, 150 custodians, 10 subclasses.">
+<meta property="og:title" content="Enron Correspondence EDA">
+<meta property="og:description" content="Full-corpus analysis of the Enron email directory for mailroom correspondence classification.">
+<meta property="og:type" content="website">
+<title>Enron Correspondence EDA</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📧</text></svg>">
+<style>
+  :root {
+    --bg: #0f1117; --surface: #1a1d29; --card: #212433;
+    --border: #2a2d3e; --text: #e2e4ed; --muted: #8b8fa3;
+    --accent: #6c72ff; --accent2: #38bdf8; --accent3: #f472b6;
+    --green: #34d399; --orange: #fb923c; --red: #f87171;
+    --radius: 10px;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Inter',system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--text); line-height:1.6; -webkit-font-smoothing:antialiased; }
+  a { color:var(--accent2); text-decoration:none; transition:color .15s; } a:hover { color:var(--accent); text-decoration:underline; }
+
+  .hero { background:linear-gradient(135deg,#0a1628 0%,#0f1117 50%,#1a0f2e 100%); padding:3.5rem 2rem 2.5rem; border-bottom:1px solid var(--border); position:relative; overflow:hidden; }
+  .hero::before { content:''; position:absolute; top:-50%; right:-10%; width:400px; height:400px; background:radial-gradient(circle,rgba(108,114,255,.08) 0%,transparent 70%); pointer-events:none; }
+  .hero-inner { max-width:1100px; margin:0 auto; position:relative; }
+  .hero h1 { font-size:2.4rem; font-weight:700; margin-bottom:0.3rem; letter-spacing:-0.02em; }
+  .hero .sub { color:var(--muted); font-size:0.95rem; margin-bottom:1.5rem; }
+  .hero .sub code { background:var(--card); padding:2px 7px; border-radius:4px; font-size:0.85rem; border:1px solid var(--border); }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:0.8rem; margin-top:1.2rem; }
+  .stat { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:1rem 1.2rem; text-align:center; transition:border-color .2s; }
+  .stat:hover { border-color:var(--accent); }
+  .stat .num { font-size:1.7rem; font-weight:700; color:var(--accent); line-height:1.2; }
+  .stat .label { font-size:0.72rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; margin-top:0.25rem; }
+
+  .nav { background:var(--surface); border-bottom:1px solid var(--border); padding:0 2rem; position:sticky; top:0; z-index:100; backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); }
+  .nav-inner { max-width:1100px; margin:0 auto; display:flex; gap:0; }
+  .nav a { font-size:0.82rem; color:var(--muted); padding:0.7rem 1rem; border-bottom:2px solid transparent; transition:all .15s; display:block; }
+  .nav a:hover { color:var(--text); text-decoration:none; }
+  .nav a.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .nav .nav-right { margin-left:auto; display:flex; align-items:center; gap:0.8rem; }
+  .nav .nav-right a { font-size:0.78rem; color:var(--muted); }
+  .nav .nav-right a:hover { color:var(--accent2); }
+
+  .container { max-width:1100px; margin:0 auto; padding:2.5rem 1.5rem; }
+  section { margin-bottom:3.5rem; scroll-margin-top:3.5rem; }
+  section h2 { font-size:1.3rem; font-weight:600; margin-bottom:1rem; padding-bottom:0.5rem; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:0.5rem; }
+  section h2::before { content:''; width:4px; height:1.2em; background:var(--accent); border-radius:2px; flex-shrink:0; }
+
+  .interactive-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(420px,1fr)); gap:1.2rem; }
+  .interactive-card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; transition:border-color .2s, box-shadow .2s; }
+  .interactive-card:hover { border-color:var(--accent); box-shadow:0 4px 20px rgba(108,114,255,.1); }
+  .interactive-card iframe { width:100%; height:420px; border:none; display:block; }
+  .interactive-card .ic-caption { padding:0.6rem 1rem; font-size:0.8rem; color:var(--muted); border-top:1px solid var(--border); }
+
+  .gallery { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:1rem; }
+  .gallery-item { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; transition:transform .15s, box-shadow .15s; cursor:pointer; }
+  .gallery-item:hover { transform:translateY(-3px); box-shadow:0 8px 24px rgba(0,0,0,.4); }
+  .gallery-item img { width:100%; height:180px; object-fit:cover; display:block; background:#181b27; }
+  .gallery-item .caption { padding:0.5rem 0.8rem; font-size:0.75rem; color:var(--muted); border-top:1px solid var(--border); }
+
+  .reports-grid { display:grid; grid-template-columns:1fr; gap:1.2rem; }
+  .report-card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+  .report-card .rc-header { padding:0.8rem 1.2rem; background:var(--surface); border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+  .report-card .rc-header h3 { margin:0; font-size:0.95rem; color:var(--text); }
+  .report-card .rc-header a { font-size:0.8rem; }
+  .report-card .rc-body { padding:1.2rem; font-size:0.88rem; line-height:1.75; max-height:600px; overflow-y:auto; }
+  .report-card .rc-body h1 { font-size:1.3rem; margin-bottom:0.5rem; }
+  .report-card .rc-body h2 { font-size:1.1rem; color:var(--accent2); margin:1.2rem 0 0.4rem; }
+  .report-card .rc-body h3 { font-size:0.95rem; color:var(--accent3); margin:1rem 0 0.3rem; }
+  .report-card .rc-body table { border-collapse:collapse; width:100%; margin:0.6rem 0; font-size:0.82rem; }
+  .report-card .rc-body th, .report-card .rc-body td { border:1px solid var(--border); padding:0.35rem 0.6rem; text-align:left; }
+  .report-card .rc-body th { background:var(--surface); color:var(--muted); font-weight:500; }
+  .report-card .rc-body code { background:var(--surface); padding:1px 5px; border-radius:3px; font-size:0.8rem; }
+  .report-card .rc-body pre { background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:1rem; overflow-x:auto; margin:0.6rem 0; }
+  .report-card .rc-body pre code { background:none; padding:0; }
+  .report-card .rc-body blockquote { border-left:3px solid var(--accent); padding:0.5rem 1rem; margin:0.6rem 0; color:var(--muted); background:var(--surface); border-radius:0 6px 6px 0; }
+  .report-card .rc-body strong { color:var(--accent); }
+  .report-card .rc-body ul, .report-card .rc-body ol { padding-left:1.2rem; }
+  .report-card .rc-body li { margin:0.2rem 0; }
+
+  .data-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:0.8rem; }
+  .data-card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:1rem; display:flex; align-items:center; gap:0.8rem; text-decoration:none; color:var(--text); transition:border-color .15s; }
+  .data-card:hover { border-color:var(--accent); text-decoration:none; }
+  .data-card .icon { font-size:1.5rem; flex-shrink:0; }
+  .data-card .info .name { font-weight:500; font-size:0.88rem; }
+  .data-card .info .desc { font-size:0.73rem; color:var(--muted); margin-top:0.1rem; }
+
+  footer { border-top:1px solid var(--border); padding:2rem; text-align:center; }
+  footer p { color:var(--muted); font-size:0.8rem; }
+  footer .sibling-links { margin-top:0.8rem; display:flex; gap:1.5rem; justify-content:center; flex-wrap:wrap; }
+  footer .sibling-links a { font-size:0.82rem; }
+
+  .lightbox { display:none; position:fixed; inset:0; background:rgba(0,0,0,.92); z-index:1000; align-items:center; justify-content:center; cursor:zoom-out; }
+  .lightbox.active { display:flex; }
+  .lightbox img { max-width:92vw; max-height:92vh; border-radius:8px; box-shadow:0 0 60px rgba(0,0,0,.5); }
+  .lightbox .close { position:absolute; top:1.5rem; right:1.5rem; color:#fff; font-size:1.5rem; cursor:pointer; background:rgba(255,255,255,.1); width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center; transition:background .15s; }
+  .lightbox .close:hover { background:rgba(255,255,255,.2); }
+  .lightbox .caption-bar { position:absolute; bottom:2rem; left:50%; transform:translateX(-50%); background:rgba(0,0,0,.7); padding:0.5rem 1.2rem; border-radius:8px; font-size:0.85rem; color:#fff; backdrop-filter:blur(8px); max-width:80vw; text-align:center; }
+
+  .scroll-top { position:fixed; bottom:2rem; right:2rem; width:44px; height:44px; border-radius:50%; background:var(--accent); color:#fff; border:none; cursor:pointer; font-size:1.2rem; display:flex; align-items:center; justify-content:center; opacity:0; pointer-events:none; transition:opacity .2s, transform .2s; z-index:999; box-shadow:0 4px 16px rgba(108,114,255,.3); }
+  .scroll-top.visible { opacity:1; pointer-events:auto; }
+  .scroll-top:hover { transform:translateY(-2px); }
+
+  @media (max-width:768px) {
+    .hero h1 { font-size:1.6rem; }
+    .stats { grid-template-columns:repeat(3,1fr); }
+    .interactive-grid { grid-template-columns:1fr; }
+    .gallery { grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); }
+    .nav-inner { overflow-x:auto; }
+    .nav .nav-right { display:none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="hero-inner">
+    <h1>Enron Correspondence EDA</h1>
+    <div class="sub">Email corpus analysis &mdash; <code>Lucius-Morningstar/docclass-merged</code> correspondence feed</div>
+    <div class="stats">
+      <div class="stat"><div class="num">517,390</div><div class="label">Messages</div></div>
+      <div class="stat"><div class="num">150</div><div class="label">Custodians</div></div>
+      <div class="stat"><div class="num">100%</div><div class="label">Parseable</div></div>
+      <div class="stat"><div class="num">83.1%</div><div class="label">Internal</div></div>
+      <div class="stat"><div class="num">756</div><div class="label">Median Body (chars)</div></div>
+      <div class="stat"><div class="num">4</div><div class="label">Attorney Demands</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="nav">
+  <div class="nav-inner">
+    <a href="#interactive" class="active">Interactive Charts</a>
+    <a href="#gallery">Static Figures</a>
+    <a href="#reports">Reports</a>
+    <a href="#data">Data</a>
+    <div class="nav-right">
+      <a href="https://exios66.github.io/Mailroom-Corpus-EDA/">Corpus EDA</a>
+      <a href="https://exios66.github.io/claims-data-eda/">Claims EDA</a>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+
+<section id="interactive">
+  <h2>Interactive Charts</h2>
+  <div class="interactive-grid">
+    <div class="interactive-card"><iframe src="eda/figures_interactive/01_subclasses_interactive.html" loading="lazy" title="Subclass distribution"></iframe><div class="ic-caption">Subclass Distribution (pie)</div></div>
+    <div class="interactive-card"><iframe src="eda/figures_interactive/02_hourly_volume.html" loading="lazy" title="Messages by hour"></iframe><div class="ic-caption">Messages by Hour of Day</div></div>
+    <div class="interactive-card"><iframe src="eda/figures_interactive/03_day_of_week.html" loading="lazy" title="Messages by day"></iframe><div class="ic-caption">Messages by Day of Week</div></div>
+    <div class="interactive-card"><iframe src="eda/figures_interactive/04_monthly_volume.html" loading="lazy" title="Volume over time"></iframe><div class="ic-caption">Volume Over Time (quarterly)</div></div>
+    <div class="interactive-card"><iframe src="eda/figures_interactive/05_internal_external.html" loading="lazy" title="Internal vs external"></iframe><div class="ic-caption">Internal vs External Senders</div></div>
+    <div class="interactive-card"><iframe src="eda/figures_interactive/06_top_senders.html" loading="lazy" title="Top 10 senders"></iframe><div class="ic-caption">Top 10 Senders by Volume</div></div>
+    <div class="interactive-card"><iframe src="eda/figures_interactive/07_body_length.html" loading="lazy" title="Body length distribution"></iframe><div class="ic-caption">Email Body Length Distribution</div></div>
+    <div class="interactive-card"><iframe src="eda/figures_interactive/08_custodian_activity.html" loading="lazy" title="Custodian activity"></iframe><div class="ic-caption">Custodian Activity Distribution</div></div>
+    <div class="interactive-card"><iframe src="eda/figures_interactive/09_fanout.html" loading="lazy" title="Message fan-out"></iframe><div class="ic-caption">Message Fan-Out (recipients)</div></div>
+    <div class="interactive-card"><iframe src="eda/figures_interactive/10_thread_sizes.html" loading="lazy" title="Thread sizes"></iframe><div class="ic-caption">Thread Size Distribution</div></div>
+    <div class="interactive-card"><iframe src="eda/figures_interactive/11_duplicates.html" loading="lazy" title="Duplicates"></iframe><div class="ic-caption">Unique vs Duplicate Rate</div></div>
+    <div class="interactive-card"><iframe src="eda/figures_interactive/12_recipient_roles.html" loading="lazy" title="Recipient roles"></iframe><div class="ic-caption">Recipient Role Distribution</div></div>
+  </div>
+</section>
+
+<section id="gallery">
+  <h2>Static Figures (12)</h2>
+  <div class="gallery">
+    <div class="gallery-item" onclick="openLightbox(this)"><img src="eda/figures/01_subclasses.png" loading="lazy" alt="Subclass distribution"><div class="caption">01 &mdash; Subclass Distribution</div></div>
+    <div class="gallery-item" onclick="openLightbox(this)"><img src="eda/figures/02_hour_of_day.png" loading="lazy" alt="Hour of day"><div class="caption">02 &mdash; Hour of Day</div></div>
+    <div class="gallery-item" onclick="openLightbox(this)"><img src="eda/figures/03_day_of_week.png" loading="lazy" alt="Day of week"><div class="caption">03 &mdash; Day of Week</div></div>
+    <div class="gallery-item" onclick="openLightbox(this)"><img src="eda/figures/04_monthly_volume.png" loading="lazy" alt="Monthly volume"><div class="caption">04 &mdash; Monthly Volume</div></div>
+    <div class="gallery-item" onclick="openLightbox(this)"><img src="eda/figures/05_internal_external.png" loading="lazy" alt="Internal vs external"><div class="caption">05 &mdash; Internal vs External</div></div>
+    <div class="gallery-item" onclick="openLightbox(this)"><img src="eda/figures/06_top_senders.png" loading="lazy" alt="Top senders"><div class="caption">06 &mdash; Top Senders</div></div>
+    <div class="gallery-item" onclick="openLightbox(this)"><img src="eda/figures/07_body_length.png" loading="lazy" alt="Body length"><div class="caption">07 &mdash; Body Length</div></div>
+    <div class="gallery-item" onclick="openLightbox(this)"><img src="eda/figures/08_custodians.png" loading="lazy" alt="Custodian activity"><div class="caption">08 &mdash; Custodian Activity</div></div>
+    <div class="gallery-item" onclick="openLightbox(this)"><img src="eda/figures/09_fanout.png" loading="lazy" alt="Fan-out"><div class="caption">09 &mdash; Fan-Out</div></div>
+    <div class="gallery-item" onclick="openLightbox(this)"><img src="eda/figures/10_thread_sizes.png" loading="lazy" alt="Thread sizes"><div class="caption">10 &mdash; Thread Sizes</div></div>
+    <div class="gallery-item" onclick="openLightbox(this)"><img src="eda/figures/11_duplicates.png" loading="lazy" alt="Duplicates"><div class="caption">11 &mdash; Duplicates</div></div>
+    <div class="gallery-item" onclick="openLightbox(this)"><img src="eda/figures/12_recipient_roles.png" loading="lazy" alt="Recipient roles"><div class="caption">12 &mdash; Recipient Roles</div></div>
+  </div>
+</section>
+
+<section id="reports">
+  <h2>Reports</h2>
+  <div class="reports-grid">
+    <div class="report-card"><div class="rc-header"><h3>Final Report</h3><a href="eda/final_report.md">raw markdown</a></div><div class="rc-body" id="report-final">Loading...</div></div>
+    <div class="report-card"><div class="rc-header"><h3>Findings</h3><a href="eda/findings.md">raw markdown</a></div><div class="rc-body" id="report-findings">Loading...</div></div>
+    <div class="report-card"><div class="rc-header"><h3>Subclasses Discovery</h3><a href="eda/subclasses_discovery.md">raw markdown</a></div><div class="rc-body" id="report-subclasses">Loading...</div></div>
+    <div class="report-card"><div class="rc-header"><h3>Full Report</h3><a href="eda/report.md">raw markdown</a></div><div class="rc-body" id="report-full">Loading...</div></div>
+  </div>
+</section>
+
+<section id="data">
+  <h2>Data Files</h2>
+  <div class="data-grid">
+    <a class="data-card" href="eda/spot_check.csv"><div class="icon">📊</div><div class="info"><div class="name">spot_check.csv</div><div class="desc">Random sample for verification</div></div></a>
+    <a class="data-card" href="pipeline/README.md"><div class="icon">📄</div><div class="info"><div class="name">pipeline/README.md</div><div class="desc">Pipeline integration notes</div></div></a>
+  </div>
+</section>
+
+</div>
+
+<footer>
+  <p>Enron Correspondence EDA &mdash; <a href="https://github.com/Exios66/Enron-Evaluation-Environment">Source</a></p>
+  <div class="sibling-links">
+    <a href="https://exios66.github.io/Mailroom-Corpus-EDA/">Corpus EDA &rarr;</a>
+    <a href="https://exios66.github.io/claims-data-eda/">Claims EDA &rarr;</a>
+  </div>
+</footer>
+
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <div class="close">&times;</div>
+  <img id="lightbox-img" src="" alt="">
+  <div class="caption-bar" id="lightbox-caption"></div>
+</div>
+
+<button class="scroll-top" id="scrollTop" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Scroll to top">&uarr;</button>
+
+<script>
+function openLightbox(el) {
+  const img = el.querySelector('img');
+  const cap = el.querySelector('.caption');
+  document.getElementById('lightbox-img').src = img.src;
+  document.getElementById('lightbox-caption').textContent = cap ? cap.textContent : '';
+  document.getElementById('lightbox').classList.add('active');
+}
+function closeLightbox() { document.getElementById('lightbox').classList.remove('active'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+
+function renderMd(url, elId) {
+  fetch(url).then(r => r.text()).then(md => {
+    let html = md
+      .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+      .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+      .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+      .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/^>\s?(.+)$/gm, '<blockquote>$1</blockquote>')
+      .replace(/<\/blockquote>\s*<blockquote>/g, '<br>')
+      .replace(/\|(.+)\|/g, (m) => {
+        const cells = m.split('|').filter(c => c.trim());
+        if (cells.every(c => /^[\s\-:]+$/.test(c))) return '';
+        return '<tr>' + cells.map(c => `<td>${c.trim()}</td>`).join('') + '</tr>';
+      })
+      .replace(/(<tr>[\s\S]*?<\/tr>)/g, '<table>$1</table>')
+      .replace(/<\/table>\s*<table>/g, '')
+      .replace(/^- (.+)$/gm, '<li>$1</li>')
+      .replace(/(<li>[\s\S]*?<\/li>)/g, (m) => m.includes('</ul>') ? m : '<ul>' + m + '</ul>')
+      .replace(/<\/ul>\s*<ul>/g, '')
+      .replace(/\n{2,}/g, '</p><p>')
+      .replace(/\n/g, '<br>');
+    document.getElementById(elId).innerHTML = '<p>' + html + '</p>';
+  }).catch(() => {
+    document.getElementById(elId).innerHTML = '<p><a href="' + url + '">View raw markdown</a></p>';
+  });
+}
+renderMd('eda/final_report.md', 'report-final');
+renderMd('eda/findings.md', 'report-findings');
+renderMd('eda/subclasses_discovery.md', 'report-subclasses');
+renderMd('eda/report.md', 'report-full');
+
+document.querySelectorAll('.nav a[href^="#"]').forEach(a => {
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    const t = document.querySelector(a.getAttribute('href'));
+    if (t) t.scrollIntoView({ behavior:'smooth', block:'start' });
+  });
+});
+
+const sections = document.querySelectorAll('section[id]');
+const navLinks = document.querySelectorAll('.nav a[href^="#"]');
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      navLinks.forEach(l => l.classList.remove('active'));
+      const active = document.querySelector(`.nav a[href="#${entry.target.id}"]`);
+      if (active) active.classList.add('active');
+    }
+  });
+}, { rootMargin: '-20% 0px -70% 0px' });
+sections.forEach(s => observer.observe(s));
+
+const scrollBtn = document.getElementById('scrollTop');
+window.addEventListener('scroll', () => {
+  scrollBtn.classList.toggle('visible', window.scrollY > 400);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+[project]
+name = "enron-evaluation-environment"
+version = "0.1.0"
+description = "EDA of the CMU Enron email corpus and production of a pipeline-ready correspondence dataset for the llm-mailroom ecosystem (monorepo virtual member)"
+requires-python = ">=3.11"
+
+# Monorepo: scripts/tests only (no build backend, no package) — resolve deps
+# in the shared workspace venv without building/installing a distribution.
+[tool.uv]
+package = false

@@ -47,7 +47,7 @@ python scripts/eda/explore_enron.py
 python scripts/build_pipeline_dump.py
 
 # 6. Validate
-pytest tests/ -v    # 36/36 expected
+pytest tests/ -v    # 74/74 expected
 ```
 
 All data files live in `data/` which is gitignored. Index is ~500MB+ JSONL; pipeline dump is a stratified sample subset.
@@ -69,7 +69,7 @@ scripts/
     ├── explore_enron.py            ← Full EDA → reports/eda/{report.md, findings.md}
     └── explore_subclasses.py       ← Subclass discovery analysis
 .opencode/skills/hf-dataset-publish/ ← SKILL.md runbook for the Hub upload (agents: load it first)
-tests/                              ← 40 unit tests in tests/test_labeler.py (no corpus data needed)
+tests/                              ← 74 unit tests in tests/test_labeler.py + tests/test_content_labels.py (no corpus data needed)
 reports/
 ├── eda/                            ← EDA reports + figures (committed)
 │   ├── final_report.md             ← STATIC copy of report.md — sync manually (16 sections)
@@ -158,7 +158,7 @@ Draws a labeled review sample from the index. Outputs a CSV where a human (Jack)
 Tests require NO corpus data. They construct minimal synthetic index-row dicts inline.
 
 ```bash
-# Run everything (expected: 40 passed)
+# Run everything (expected: 74 passed)
 pytest tests/ -v
 
 # Run just classification tests
