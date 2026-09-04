@@ -1,0 +1,28 @@
+# NOTICE TO: All Current Enron Employees who Participate in the Enron Corp. Savings Plan
+
+| Field | Value |
+| --- | --- |
+| From | no.address@enron.com |
+| Date | 2002-01-03T23:35:15+00:00 |
+| Message-ID | 33268061.1075840318242.JavaMail.evans@thyme |
+| Subclass | **Notice** (`notice`) |
+| Labeler evidence | notice forms |
+| Custodian | bass-e |
+| Folder | deleted_items |
+| Thread | bass-e/deleted_items |
+
+## Body
+
+TO: All Current Enron Employees who Participate in the Enron Corp. Savings Plan
+
+Due to an Enron programming error in the transmission of data to the Enron Corp. Savings Plan administrator, a number of currently active employees were erroneously coded with a status of terminated on the Savings Plan system.
+
+As a result, you may have received a notice from Hewitt Associates, the Savings Plan administrator, indicating that you were a terminated employee and providing you with options for your Savings Plan account. This notice was sent in error, and should be disregarded.
+
+This situation was identified and corrected. We regret any confusion or inconvenience this may have caused.
+
+If you would like to verify that your Savings Plan employment status has been corrected, you may log in to the Savings Plan website through the Enron intranet (benefits.enron.com) or the internet (resources.hewitt.com/enron) and view your status in the "Personal Data" option off the main log-in screen.
+
+If you have further questions, please contact a representative at the Benefits Service Center at 800-332-7979, option 3.
+
+Corporate Benefits

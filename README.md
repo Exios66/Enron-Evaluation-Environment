@@ -147,7 +147,10 @@ python scripts/dedupe.py --index data/enron/index.jsonl --out data/enron/index.u
 # 6️⃣ Draw a labeled spot-check sample for human review
 python scripts/spot_check.py
 
-# 7️⃣ Validate correctness with the test harness (no corpus data needed)
+# 7️⃣ Render the Markdown correspondence samples (samples/)
+python scripts/build_samples.py
+
+# 8️⃣ Validate correctness with the test harness (no corpus data needed)
 pytest tests/ -v                       # 74/74 passing
 ```
 
@@ -294,6 +297,7 @@ before publishing. Row-compatible sibling implementation:
 │   ├── dedupe.py                       # Exact-duplicate removal → index.unique.jsonl
 │   ├── build_pipeline_dump.py          # Stratified sample → data/enron/pipeline.jsonl
 │   ├── spot_check.py                   # Labeled review sample → reports/eda/spot_check.csv
+│   ├── build_samples.py                # Taxonomy-stratified Markdown samples → samples/
 │   ├── publish_hf_dataset.py           # HF Hub publisher → Lucius-Morningstar/enron-correspondence
 │   └── eda/
 │       ├── explore_enron.py            # Full-corpus EDA → reports/eda/{report.md, findings.md}

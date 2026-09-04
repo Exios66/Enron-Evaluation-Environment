@@ -63,6 +63,7 @@ scripts/
 ├── build_corpus_index.py           ← Parse maildir → data/enron/index.jsonl
 ├── dedupe.py                       ← Exact-duplicate removal → index.unique.jsonl
 ├── build_pipeline_dump.py          ← Stratified sample → pipeline.jsonl
+├── build_samples.py                ← Taxonomy-stratified Markdown samples → samples/ (HUB-045)
 ├── spot_check.py                   ← Draw review sample → CSV
 ├── publish_hf_dataset.py           ← HF Hub publisher → Lucius-Morningstar/enron-correspondence
 └── eda/
@@ -229,6 +230,19 @@ When updating EDA analysis code, follow this checklist:
 python scripts/build_pipeline_dump.py --dry-run   # preview plan
 python scripts/build_pipeline_dump.py              # execute
 ```
+
+### Generating the Markdown samples folder (HUB-045)
+```bash
+# Corpus must be acquired first (gitignored); samples are the ONLY
+# committed corpus text — bounded, deterministic, taxonomy-stratified.
+python scripts/build_samples.py --dry-run     # preview the selection
+python scripts/build_samples.py               # render samples/ + README
+```
+Selection law: N per subclass key via the SHARED labeler (candidates
+reservoir + seeded RNG — seed 20150507, the tarball date), walk cap
+40k, per-message body cap. Same corpus + seed ⇒ byte-identical
+output. Committed samples double as a human-readable taxonomy
+showcase; never commit bulk corpus text beyond this folder.
 
 ### Publishing to Hugging Face Hub
 
