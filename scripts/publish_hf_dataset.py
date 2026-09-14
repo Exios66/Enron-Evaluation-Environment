@@ -48,15 +48,36 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
+# hub#59: import the sibling scripts as plain modules (scripts/ has no
+# __init__.py; the `from scripts.…` package form resolves to a DIFFERENT
+# `scripts` package when llm-mailroom/src is on the venv path — the
+# monorepo editable installs shadow it). This matches the other family
+# scripts' bootstrap.
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from scripts.correspondence_subclasses import SUBCLASS_KEYS, label_correspondence  # noqa: E402
+from correspondence_subclasses import SUBCLASS_KEYS, label_correspondence  # noqa: E402
 
 DEFAULT_INDEX = REPO_ROOT / "data" / "enron" / "index.jsonl"
 OUT_DIR = REPO_ROOT / "data" / "hf_export"
 STAGED_NAME = "enron_correspondence.jsonl"
 HF_USERNAME = os.environ.get("HF_USERNAME", "Lucius-Morningstar")
 REPO_ID = f"{HF_USERNAME}/enron-correspondence-dedup"
-LABELER_TESTS = "40"
+
+
+def _count_labeler_tests() -> str:
+    """Count `def test_` in tests/test_labeler.py at publish time.
+
+    hub#59: the dataset card's `{labeler_tests}` line used a hardcoded '40'
+    that drifted silently as the suite grew (40 -> 85 total across the three
+    test files). The card now derives the count from the actual test file so
+    a test addition cannot silently stale the live card again.
+    """
+    labeler = REPO_ROOT / "tests" / "test_labeler.py"
+    try:
+        text = labeler.read_text(encoding="utf-8")
+    except OSError:
+        return "?"
+    return str(text.count("def test_"))
 
 
 def assign_split(filename: str) -> str:
@@ -251,7 +272,7 @@ def main_with_args(argv: list[str]) -> int:
         "subclass_counts": dict(sub_counts),
         "split_coverage": {"train": train_n, "test": test_n,
                            "rule": "md5(filename) % 10 == 0 -> test (10%); "
-                                   "same family rule as docclass-merged"},
+                                   "same family rule as mailroom-dataset"},
         "local_sha256": local_sha,
         "labeler": "Enron-Evaluation-Environment scripts/correspondence_subclasses.py "
                    "(shared 10-key taxonomy, first-match-wins)",
@@ -275,6 +296,10 @@ def main_with_args(argv: list[str]) -> int:
                     private=args.private, exist_ok=True)
 
     taxonomy = ", ".join(SUBCLASS_KEYS)
+    # hub#59: the labeler-test count is derived at publish time (count `def
+    # test_` in tests/test_labeler.py via rg/ast), never a hardcoded constant
+    # that silently drifts the live card on the next publish.
+    labeler_tests = _count_labeler_tests()
     card_ctx = {
         "rows": len(rows),
         "custodians": len(custodians),
@@ -282,7 +307,7 @@ def main_with_args(argv: list[str]) -> int:
         "built_utc": manifest["built_utc"],
         "parseable": total - unparseable,
         "total": total,
-        "labeler_tests": LABELER_TESTS,
+        "labeler_tests": labeler_tests,
     }
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
@@ -315,8 +340,13 @@ def main_with_args(argv: list[str]) -> int:
         "hub_lfs_sha256": (hub_sha or "")[:12],
         "verified": bool(hub_sha and hub_sha == local_sha),
     }
-    out = OUT_DIR / "PUBLISH_SUMMARY.json"
-    out.write_text(json.dumps({"enron_correspondence": result}, indent=2))
+    # hub#59: write the summary NEXT to args.out (and include repo_id/out) —
+    # the old code always wrote to the fixed OUT_DIR even when --out/
+    # --repo-id were overridden.
+    out = args.out.parent / "PUBLISH_SUMMARY.json"
+    out.write_text(json.dumps({
+        "enron_correspondence": {**result, "repo_id": args.repo_id, "out": str(args.out)},
+    }, indent=2))
     print("\n" + json.dumps(result, indent=1))
     print("VERIFY:", "GREEN" if result["verified"] else "RED — inspect!")
     return 0

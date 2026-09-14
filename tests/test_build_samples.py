@@ -103,3 +103,13 @@ class TestRenderMarkdown:
         assert "### Forwarded / quoted content" in text
         assert "their quoted text" in text
         assert "My answer here." in text
+
+    def test_quote_continuation_joins_same_level(self):
+        out = _render_body("reply\n> first quoted line\n> second quoted line")
+        assert "> first quoted line\n> second quoted line" in out
+        assert out.count("\n\n") <= 1  # one blockquote paragraph, not two
+
+    def test_quote_depth_change_opens_new_paragraph(self):
+        out = _render_body("> top\n>> nested\n> back")
+        assert "> > nested" in out
+        assert out.count("\n\n") >= 1  # depth change separates paragraphs

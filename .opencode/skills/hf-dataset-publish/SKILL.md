@@ -1,6 +1,6 @@
 ---
 name: hf-dataset-publish
-description: "USE WHEN publishing any dataset from this repo to the Hugging Face Hub, updating the Lucius-Morningstar/enron-correspondence dataset, or when a task mentions HF upload, dataset card, LFS verification, or the KANBAN-074 publish pattern. Encodes the family-wide publish discipline: stage → schema-guard → card → upload_folder → sha256 verify."
+description: "USE WHEN publishing any dataset from this repo to the Hugging Face Hub, updating the Lucius-Morningstar/enron-correspondence-dedup dataset, or when a task mentions HF upload, dataset card, LFS verification, or the KANBAN-074 publish pattern. Encodes the family-wide publish discipline: stage → schema-guard → card → upload_folder → sha256 verify."
 ---
 
 # Hugging Face Dataset Publication — Enron Correspondence
@@ -9,8 +9,8 @@ This repo owns the **correspondence data-production node** of the
 Lucius-Morningstar governed dataset family. The canonical Hub artifact is:
 
 ```
-Lucius-Morningstar/enron-correspondence
-https://huggingface.co/datasets/Lucius-Morningstar/enron-correspondence
+Lucius-Morningstar/enron-correspondence-dedup
+https://huggingface.co/datasets/Lucius-Morningstar/enron-correspondence-dedup
 ```
 
 The publisher is `scripts/publish_hf_dataset.py`. It is row-compatible with
@@ -77,7 +77,7 @@ What it does, in sequence:
 
 1. **Split rule is family-wide**: `int(md5(filename.strip()), 16) % 10 == 0 → test`
    (~10%). Never invent a different split — every dataset in the family
-   (docclass-merged, enron-correspondence) must recompute identical splits.
+   (mailroom-dataset, enron-correspondence-dedup) must recompute identical splits.
 2. **One taxonomy source**: labels come from
    `scripts/correspondence_subclasses.label_correspondence` only. If this
    repo's enum changes, the sibling publisher picks it up automatically here;

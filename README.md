@@ -12,7 +12,7 @@ doc class (emails, memos, letters, notices, demands), with a second-level
 in the corpus.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/pytest-74%2F74_passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/pytest-85%2F85_passing-brightgreen)](tests/)
 [![Status](https://img.shields.io/badge/status-production-success)](reports/eda/final_report.md)
 [![Last Commit](https://img.shields.io/github/last-commit/Exios66/Enron-Evaluation-Environment?logo=github&label=updated)](https://github.com/Exios66/Enron-Evaluation-Environment/commits/main)
 [![Repo Size](https://img.shields.io/github/repo-size/Exios66/Enron-Evaluation-Environment?logo=github)](https://github.com/Exios66/Enron-Evaluation-Environment)
@@ -80,7 +80,7 @@ vocabulary excluded; reply/forward chains can't masquerade as memos).
 
 ### Deterministic labeling
 Classification is a pure function of index-row fields — rebuilds produce
-byte-identical results, verified by the 74-test harness.
+byte-identical results, verified by the 85-test harness.
 
 </td><td width="50%">
 
@@ -151,7 +151,7 @@ python scripts/spot_check.py
 python scripts/build_samples.py
 
 # 8️⃣ Validate correctness with the test harness (no corpus data needed)
-pytest tests/ -v                       # 74/74 passing
+pytest tests/ -v                       # 87/87 passing
 ```
 
 <details>
@@ -222,7 +222,7 @@ GT for the `correspondence_specialist`'s sender/recipient/date fields.
 
 ## 🧪 Test Harness
 
-A **74-test** validation suite verifies the entire labeler pipeline without
+A **85-test** validation suite verifies the entire labeler pipeline without
 requiring corpus data:
 
 | Category | Coverage |
@@ -289,7 +289,7 @@ before publishing. Row-compatible sibling implementation:
 
 ```
 ├── AGENTS.md                           # Agent-facing operational guide
-├── tests/                              # ✅ 74/74 validation harness
+├── tests/                              # ✅ 87/87 validation harness
 ├── scripts/
 │   ├── correspondence_subclasses.py    # Shared heuristic labeler (10-key taxonomy)
 │   ├── acquire_enron.py                # Download + verify + extract CMU tarball
@@ -298,7 +298,7 @@ before publishing. Row-compatible sibling implementation:
 │   ├── build_pipeline_dump.py          # Stratified sample → data/enron/pipeline.jsonl
 │   ├── spot_check.py                   # Labeled review sample → reports/eda/spot_check.csv
 │   ├── build_samples.py                # Taxonomy-stratified Markdown samples → samples/
-│   ├── publish_hf_dataset.py           # HF Hub publisher → Lucius-Morningstar/enron-correspondence
+│   ├── publish_hf_dataset.py           # HF Hub publisher → Lucius-Morningstar/enron-correspondence-dedup
 │   └── eda/
 │       ├── explore_enron.py            # Full-corpus EDA → reports/eda/{report.md, findings.md}
 │       └── explore_subclasses.py       # Subclass discovery & edge-case analysis
@@ -318,7 +318,7 @@ python scripts/build_corpus_index.py     # parse maildir -> index.jsonl
 python scripts/eda/explore_enron.py      # EDA -> reports/eda/
 python scripts/build_pipeline_dump.py    # sample -> pipeline.jsonl (+ dry-run)
 python scripts/spot_check.py             # review artifact -> reports/eda/spot_check.csv
-pytest tests/ -v                         # 74/74 validation pass
+pytest tests/ -v                         # 87/87 validation pass
 ```
 
 ---

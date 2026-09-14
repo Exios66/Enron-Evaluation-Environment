@@ -63,21 +63,30 @@ def _esc_cell(text: str) -> str:
 
 
 def _render_body(body: str) -> str:
-    """Body → Markdown: tidy paragraphs, ``>`` quoting → blockquotes."""
+    """Body → Markdown: tidy paragraphs, ``>`` quoting → blockquotes.
+
+    Consecutive ``>``-quoted lines form ONE blockquote paragraph (the
+    continuation case the dead branch once faked — hub#59): same-level
+    quoted lines are joined with a blank line inside the blockquote, and a
+    deeper quote opens a nested blockquote.
+    """
     body = _NL_RE.sub("\n\n", body)
     out: list[str] = []
-    prev_level = 0
     for line in body.splitlines():
         m = _QUOTE_RE.match(line.rstrip())
         level, content = len(m.group(1)), m.group(2).strip()
-        if level > prev_level and out and out[-1]:
-            pass  # blockquote continuation handled below
+        if not content:
+            continue  # blank lines separate paragraphs (the \n\n join)
         if level == 0:
             out.append(content)
         else:
-            out.append("> " * level + content)
-        prev_level = level
-    return "\n".join(out).strip()
+            marker = "> " * level
+            if out and out[-1].startswith(marker):
+                # blockquote continuation: join into the open paragraph
+                out[-1] = out[-1] + "\n" + marker + content
+            else:
+                out.append(marker + content)
+    return "\n\n".join(out).strip()
 
 
 def _people(recipients: list[dict], role: str) -> str:
