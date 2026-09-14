@@ -1,3 +1,8 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
 # Raw corpus artifacts (large, regenerable — never commit)
 data/raw/
 data/enron/
@@ -12,9 +17,17 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.log
 
 # OS / editor
 .DS_Store
+Thumbs.db
+.ipynb_checkpoints/
 data/cleaned/index_cleaned.jsonl
 
 # local data dir (lives in /tmp during pipeline runs; regenerate via scripts/acquire_enron.py)
